@@ -33,16 +33,34 @@ the board and sends one MIDI note-on per tap:
 No note-off is sent: the app plays one-shot notes, and a second packet would only queue up behind
 the next tap.
 
-## Hardware
+## Hardware: parts list
 
-- XIAO nRF52840 Sense (£15.90 at The Pi Hut, 4 g).
-- 3.7 V LiPo, 100–150 mAh, soldered to the BAT+/BAT− pads on the underside. The board charges it
-  over USB-C.
-- A 3D-printed or heat-shrink case, and a velcro strap or shoe-lace clip. Mount the board flat
-  on the top of the shoe for the sharpest spike.
+| Part | Example | Approx. £ | Notes |
+| --- | --- | --- | --- |
+| Board | [Seeed XIAO nRF52840 Sense](https://thepihut.com/products/seeed-xiao-ble-nrf52840-sense) ×2 | 32 | Buy a spare. Get the plain Sense, not the "Plus" (it's bigger and has pins we don't need). |
+| Battery | [150 mAh 3.7 V LiPo, JST-PH](https://thepihut.com/products/150mah-3-7v-lipo-battery) | 6 | Must have a protection circuit (PCM), as Adafruit-type cells do. 150 mAh should last well past 4 h (not measured). Charges at 50 or 100 mA through USB-C. |
+| Power switch | [Mini SPDT slide switch](https://thepihut.com/products/breadboard-friendly-spdt-slide-switch) | 1 | In the battery + lead. The XIAO has no off switch, so without one it drains the cell in the bag. |
+| Battery connector (optional) | JST-PH 2-pin socket pigtail | 1 | Lets you swap the battery without desoldering. **Check polarity:** JST leads are not standardised between brands. |
+| Wire and insulation | 26–28 AWG silicone wire, heat-shrink, Kapton tape | 3 | Silicone wire survives flexing. Kapton between board and battery. |
+| Case | 3D-printed, or a small ABS box (~35 × 25 × 12 mm) | 0–5 | Must hold the board **rigidly**: loose mounting blurs the tap spike. Foam only around the battery. |
+| Strap | 20–25 mm elastic hook-and-loop strap, or a shoe-lace clip | 3–5 | Goes on top of the shoe or the ankle, never under the foot. |
+| Cable | USB-C data cable | — | For flashing, charging and the wired USB MIDI fallback. |
 
-Battery life is not measured yet. Expect several mA while connected and polling the IMU, so a
-100 mAh cell should last well over the 4 h target. Measure before a gig.
+Total about £45 for two sensors, plus a soldering iron if you don't have one.
+
+Wiring: battery − → BAT− pad. Battery + → switch → BAT+ pad. The pads are on the underside of
+the board, next to the USB-C socket. Check the + and − markings before soldering: reversing a
+LiPo can kill the charger.
+
+Robustness:
+
+- Fix the board to the case with hot glue or a screw boss, not foam tape. Pad the battery so a
+  stomp can't crush or puncture it.
+- Put strain relief on the battery wires (a dab of hot glue where they meet the pads).
+- Leave the USB-C socket reachable through the case wall, and make the switch reachable too.
+- A conformal coat or a snug case lip keeps out sweat and stage dust.
+- **Don't drive P0.14 (VBAT_ENABLE) HIGH while charging.** Seeed warns this can damage P0.31.
+  The firmware doesn't touch it today. Keep that in mind if battery reporting is added.
 
 ## Checking the connection interval
 
