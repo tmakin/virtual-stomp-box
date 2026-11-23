@@ -46,7 +46,7 @@ class StompTuningActivity : Activity() {
         status = TextView(this).apply { textSize = 12f }
         col.addView(status)
         plot = StompPlotView(this).apply {
-            zoneOf = { idx -> synchronized(engine.recentStomps) { engine.recentStomps.lastOrNull { it.sampleIndex == idx }?.zone }.let(::zoneColor) }
+            zoneOf = { idx -> synchronized(engine.recentStomps) { engine.recentStomps.lastOrNull { it.sampleIndex == idx }?.zone }.let { zoneColor(it) } }
         }
         col.addView(plot, LinearLayout.LayoutParams(MATCH_PARENT, 520))
         last = TextView(this).apply { textSize = 18f }
@@ -64,7 +64,9 @@ class StompTuningActivity : Activity() {
         val mic = CheckBox(this).apply { text = "with mic (latency)" }
         col.addView(row(
             button("Record") { b ->
-                if (!engine.isRecording) { engine.startRecording(mic.isChecked); b.text = "Stop & share" }
+                if (mic.isChecked && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 2)
+                } else if (!engine.isRecording) { engine.startRecording(mic.isChecked); b.text = "Stop & share" }
                 else { engine.stopRecording()?.let(::share); b.text = "Record" }
             },
             mic,

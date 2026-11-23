@@ -1,3 +1,5 @@
+> **Superseded:** these notes are for the earlier XIAO/MIDI sensor and the bitxo app. The current app is in [`app/`](../app); paths below are out of date.
+
 # Android side: foot-sensor input and latency probe
 
 Code for the Stomp Box app (`tmakin/bitxo`, `stompbox/`) to read the WT901 BLE stomp sensor,

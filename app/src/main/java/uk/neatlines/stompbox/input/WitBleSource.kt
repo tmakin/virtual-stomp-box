@@ -55,6 +55,8 @@ class WitBleSource(
     private var gatt: BluetoothGatt? = null
     private var write: BluetoothGattCharacteristic? = null
     private var arrival = 0L
+    private var scanCallback: ScanCallback? = null
+    @Volatile private var stopped = true
     private val parser = WitPacketParser(
         onSample = { s -> onSample(s, arrival) },
         onRegisters = { reg, v -> onRegisters(reg, v) },
@@ -62,6 +64,7 @@ class WitBleSource(
 
     /** Connects to [address] if given, otherwise to the first device whose name starts with "WT". */
     fun start(address: String? = null) {
+        stopped = false
         if (address != null) { connect(manager.adapter.getRemoteDevice(address)); return }
         setStatus("scanning")
         val scanner = manager.adapter.bluetoothLeScanner
@@ -74,12 +77,15 @@ class WitBleSource(
             }
             override fun onScanFailed(errorCode: Int) = setStatus("scan failed $errorCode")
         }
+        scanCallback = cb
         scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb)
         handler.postDelayed({ scanner.stopScan(cb); if (gatt == null) setStatus("no WT901 found") }, 15_000)
     }
 
     fun stop() {
+        stopped = true
         handler.removeCallbacksAndMessages(null)
+        scanCallback?.let { runCatching { manager.adapter.bluetoothLeScanner?.stopScan(it) } }; scanCallback = null
         gatt?.disconnect(); gatt?.close(); gatt = null; write = null
         setStatus("idle")
     }
@@ -103,7 +109,7 @@ class WitBleSource(
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 setStatus("disconnected ($st), retrying")
                 g.close(); gatt = null; write = null
-                handler.postDelayed({ connect(g.device) }, 1000)
+                if (!stopped) handler.postDelayed({ connect(g.device) }, 1000)
             }
         }
 
@@ -129,12 +135,6 @@ class WitBleSource(
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
             arrival = System.nanoTime()
             parser.feed(value)
-        }
-
-        @Deprecated("pre-Android 13")
-        override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
-            arrival = System.nanoTime()
-            @Suppress("DEPRECATION") parser.feed(c.value)
         }
     }
 

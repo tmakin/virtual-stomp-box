@@ -85,12 +85,12 @@ WT901 ──BLE notify (FFE4)──▶ WitBleSource        takes System.nanoTime
 
 | File | Where | Tested |
 |---|---|---|
-| `wit/WitProtocol.kt`: UUIDs, commands, frame parser | `android/src/main` | unit tests |
-| `wit/SampleClock.kt` | `android/src/main` | unit tests (jitter, dropped frames, crystal error) |
-| `stomp/Orientation.kt`: gravity from angles, calibration, tilt | `android/src/main` | unit tests |
-| `stomp/StompConfig.kt`, `StompDetector.kt`, `StompTiming.kt`, `StompPipeline.kt` | `android/src/main` | unit tests on simulated stomps |
-| `debug/StompLog.kt`, `LinkStats.kt`, `Replay.kt` | `android/src/main` | round-trip test; replay run on a synthetic log |
-| `input/WitBleSource.kt`, `stomp/StompEngine.kt`, `debug/StompTuningActivity.kt`, `debug/StompPlotView.kt` | `android/android-only` | **not compiled**: no Android SDK in this session |
+| `wit/WitProtocol.kt`: UUIDs, commands, frame parser | `core` | unit tests |
+| `wit/SampleClock.kt` | `core` | unit tests (jitter, dropped frames, crystal error) |
+| `stomp/Orientation.kt`: gravity from angles, calibration, tilt | `core` | unit tests |
+| `stomp/StompConfig.kt`, `StompDetector.kt`, `StompTiming.kt`, `StompPipeline.kt` | `core` | unit tests on simulated stomps |
+| `debug/StompLog.kt`, `LinkStats.kt`, `Replay.kt` | `core` | round-trip test; replay run on a synthetic log |
+| `input/WitBleSource.kt`, `stomp/StompEngine.kt`, `debug/StompTuningActivity.kt`, `debug/StompPlotView.kt` | `app` | compiled by CI only; not run on a phone yet |
 
 ## How the detector uses the data
 
@@ -161,11 +161,11 @@ mode keeps its own tuning.
 ### On the laptop: replay
 
 ```bash
-cd android
-./gradlew run --args="stomp-log.csv"                                 # reproduce the live run
-./gradlew run --args="stomp-log.csv feature=JERK minThresholdG=0.9"  # try other settings
-./gradlew run --args="stomp-log.csv --sweep minThresholdG=0.6:2.0:0.2"
-./gradlew run --args="stomp-log.csv --frames frames.csv" && python3 ../tools/plot_stomp_frames.py frames.csv
+# use absolute paths: the tool runs from core/
+./gradlew :core:run --args="$PWD/stomp-log.csv"                                 # reproduce the live run
+./gradlew :core:run --args="$PWD/stomp-log.csv feature=JERK minThresholdG=0.9"  # try other settings
+./gradlew :core:run --args="$PWD/stomp-log.csv --sweep minThresholdG=0.6:2.0:0.2"
+./gradlew :core:run --args="$PWD/stomp-log.csv --frames $PWD/frames.csv" && python3 tools/plot_stomp_frames.py frames.csv
 ```
 
 The tool reports:
@@ -201,27 +201,25 @@ better than the model's.
    Copy the winning values into the sliders.
 6. Play with IMMEDIATE and then STEADY, and keep whichever feels better.
 
-## Adding it to the app
+## The test app
 
-1. Copy `android/src/main/kotlin/**` and `android/android-only/**` into
-   `stompbox/app/src/main/java/uk/neatlines/stompbox/`. The packages already match.
-2. Create the engine and connect it to the sound engine:
-   ```kotlin
-   engine = StompEngine(this) { note, velocity -> soundEngine.trigger(note, velocity) }
-   engine.start()   // after BLUETOOTH_SCAN + BLUETOOTH_CONNECT are granted
-   StompTuningActivity.engineHolder = engine   // then startActivity(Intent(this, StompTuningActivity::class.java))
-   ```
-   If the app's `TapEvent` uses `SystemClock.elapsedRealtimeNanos()`, convert from
-   `System.nanoTime()` once with
-   `elapsedRealtimeNanos() - nanoTime()`, measured at start.
-3. Add to the manifest: the Bluetooth permissions from [android/README.md](../android/README.md),
-   `RECORD_AUDIO` for the microphone option, the `StompTuningActivity`, and a `FileProvider`
-   with authority `${applicationId}.files` exposing `stomp-logs/` in external files.
-4. **STEADY timing on the audio side.** `StompEngine` wakes a high-priority thread at the target
-   time and calls `play()`. That is usually well under 1 ms off target, but it hasn't been measured. If the sound engine only starts
-   notes at buffer boundaries, it adds up to one buffer of jitter (2 ms at 96 frames / 48 kHz). If
-   the sound engine can start a note at a given frame, pass it the target time instead. That is
-   the better long-term fix.
+The `app` module is a fresh, minimal Stomp Box app built around this sensor. The README explains
+how to install it from the CI release.
+
+- `StompApp` owns the `StompEngine` and a `DrumSynth`: kick on note 36, snare on 38, click for
+  anything else. Each synth voice is generated in code and played on a low-latency `AudioTrack`
+  with a two-burst buffer. The home screen shows the reported buffer size in ms.
+- The home screen has Connect, a large flash per stomp coloured by zone with the velocity, Mute,
+  and **Tune & debug**.
+- The engine plays IMMEDIATE stomps on the GATT thread. STEADY stomps go through a high-priority
+  scheduler thread that wakes at the target time. That is usually well under 1 ms off target,
+  but it hasn't been measured. The synth starts a voice at its next burst, which adds up to one
+  burst (about 2–4 ms) of jitter. Starting voices at a given frame inside the synth would remove
+  that.
+- Settings, calibration and the mode are kept in SharedPreferences. Recordings are saved to
+  `Android/data/uk.neatlines.stompbox/files/stomp-logs/` and shared through a `FileProvider`.
+- Builds are signed with `app/debug.keystore`, which is committed so every CI build installs over
+  the previous one. It's for test builds only.
 
 ## Risks and open questions
 

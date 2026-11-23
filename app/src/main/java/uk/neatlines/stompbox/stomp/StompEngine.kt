@@ -36,6 +36,8 @@ class StompEngine(private val context: Context, private val output: StompOutput)
 
     /** Latest stomps for the UI, newest last. */
     val recentStomps = ArrayDeque<StompEvent>()
+    /** For the home screen's flash; called on the GATT thread. */
+    @Volatile var onStompUi: ((StompEvent) -> Unit)? = null
     @Volatile var lastSample: WitSample? = null; private set
 
     var config: StompConfig
@@ -46,7 +48,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         get() = config.mode
         set(m) { prefs.edit().putString("mode", m.name).apply(); pipeline.config = loadConfig(m) }
 
-    fun start(address: String? = prefs.getString("address", null)) = source.start(address)
+    fun start(address: String? = null) = source.start(address)
     fun stop() { stopRecording(); source.stop() }
     fun link(): LinkStats.Snapshot = pipeline.link.snapshot()
 
@@ -63,6 +65,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         if (fireAtNanos <= System.nanoTime()) output.play(e.note, e.velocity) else scheduler.schedule(fireAtNanos, e)
         recorder?.stomp(e, fireAtNanos)
         synchronized(recentStomps) { recentStomps.addLast(e); while (recentStomps.size > 50) recentStomps.removeFirst() }
+        onStompUi?.invoke(e)
         // Live debug without the app UI: adb logcat -s Stomp
         Log.d("Stomp", "zone=${e.zone} vel=${e.velocity} peak=%.2f tilt=%.1f lag=%.1fms".format(
             e.peak, e.tiltDeg, (e.arrivalNanos - e.sampleNanos) / 1e6))
@@ -79,7 +82,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
                 while (true) {
                     val left = at - System.nanoTime()
                     if (left <= 0) break
-                    if (left > 500_000) LockSupport.parkNanos(left - 500_000) else Thread.onSpinWait()
+                    if (left > 500_000) LockSupport.parkNanos(left - 500_000) else Thread.yield()
                     if (queue.peek()?.let { it.first < at } == true) { queue.put(at to e); break }
                 }
                 if (at <= System.nanoTime()) output.play(e.note, e.velocity)
@@ -140,7 +143,9 @@ class StompEngine(private val context: Context, private val output: StompOutput)
             "batteryV" to "${source.batteryVolts}", "device" to (source.deviceName ?: "?"),
             "phone" to "${Build.MANUFACTURER} ${Build.MODEL}", "android" to "${Build.VERSION.SDK_INT}",
         ))
-        if (withMic) probe = LatencyProbe().also { it.start() }
+        val micAllowed = context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (withMic && micAllowed) probe = LatencyProbe().also { it.start() }
         recordFile = f; recorder = w
         return f
     }

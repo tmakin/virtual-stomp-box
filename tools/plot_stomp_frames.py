@@ -2,8 +2,8 @@
 """Plot the per-sample trace written by the replay tool (--frames), to see why a stomp was
 missed or double-triggered.
 
-    cd android && ./gradlew run --args="stomp-log.csv --frames frames.csv"
-    python3 tools/plot_stomp_frames.py android/frames.csv [--from 10 --to 20] [--out plot.png]
+    ./gradlew :core:run --args="$PWD/stomp-log.csv --frames $PWD/frames.csv"
+    python3 tools/plot_stomp_frames.py frames.csv [--from 10 --to 20] [--out plot.png]
 
 Top: the feature and threshold, with triggers. Middle: vertical acceleration and jerk.
 Bottom: tilt and gyro, plus the delay from sample to arrival (BLE jitter). Needs matplotlib.
