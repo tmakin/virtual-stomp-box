@@ -1,5 +1,8 @@
 # Leg-strapped tap sensor for Stomp Box: findings
 
+> **Superseded (Nov 2026):** we bought a WitMotion WT901 BLE sensor instead. See
+> [wt901-design.md](wt901-design.md). This page is kept for the sensor comparison and the BLE timing analysis.
+
 Oct 31, 2026 · answer to the "Leg-Strapped Accelerometer for Stomp Box" handoff
 
 ## Short answer

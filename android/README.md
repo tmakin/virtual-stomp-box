@@ -1,16 +1,31 @@
 # Android side: foot-sensor input and latency probe
 
-Code for the Stomp Box app (`tmakin/bitxo`, `stompbox/`) to read a MIDI foot sensor and to
-measure tap-to-app latency on the Pixel 8.
+Code for the Stomp Box app (`tmakin/bitxo`, `stompbox/`) to read the WT901 BLE stomp sensor,
+tune it, and measure stomp-to-app latency on the Pixel 8. The design is in
+[../docs/wt901-design.md](../docs/wt901-design.md).
 
 ```
-src/main/kotlin/...   platform-independent, unit-tested here (gradle test, 19 tests)
+src/main/kotlin/...   platform-independent, unit-tested here (gradle test, 37 tests)
+  wit/WitProtocol.kt             WT901 UUIDs, commands, 0x61/0x71 frame parser
+  wit/SampleClock.kt             arrival times → estimated sample times (removes BLE jitter)
+  stomp/Orientation.kt           gravity from roll/pitch, two-pose calibration, tilt
+  stomp/StompConfig.kt           every tunable, shoe/leg defaults, key=value form
+  stomp/StompDetector.kt         impact detection, velocity, heel/toe zone
+  stomp/StompTiming.kt           IMMEDIATE / STEADY fire time
+  stomp/StompPipeline.kt         clock + link stats + detector + timing (phone and replay)
+  debug/StompLog.kt              recording format (write/read)
+  debug/LinkStats.kt             connection interval, frames per event, lag
+  debug/Replay.kt                desktop replay / sweep (gradle run)
   midi/MidiTapParser.kt          MIDI bytes → note-on taps (running status, real-time, SysEx)
   midi/BleMidiPacketParser.kt    raw BLE-MIDI packets → taps + sender timestamp
   latency/OnsetDetector.kt       impact onsets in mic audio
   latency/TapPairer.kt           pairs mic impacts with sensor events
   latency/LatencyStats.kt        median, p95, spread
 android-only/...      needs the Android SDK; not compiled here
+  input/WitBleSource.kt          WT901 over GATT: 200 Hz, 188 Hz bandwidth, battery
+  stomp/StompEngine.kt           source → pipeline → sound; calibration, recording, settings
+  debug/StompTuningActivity.kt   live plot, sliders, calibrate, record & share
+  debug/StompPlotView.kt         scrolling trace
   input/MidiTapSource.kt         android.media.midi: BLE MIDI or USB MIDI → TapEvent
   input/GattMidiTapSource.kt     same sensor over raw GATT, to measure the MIDI service's cost
   latency/LatencyProbe.kt        mic-referenced latency test harness
@@ -20,6 +35,9 @@ android-only/...      needs the Android SDK; not compiled here
 compiled**, because there is no Android SDK in the session that wrote them.
 
 ## Adding to the app
+
+For the WT901, follow "Adding it to the app" in the design doc. The rest of this section is
+about the earlier MIDI sensor.
 
 Copy both trees into `stompbox/app/src/main/java/uk/neatlines/stompbox/`. The packages already
 match.

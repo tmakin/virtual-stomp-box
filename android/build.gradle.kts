@@ -1,5 +1,6 @@
 plugins {
     kotlin("jvm") version "2.0.21"
+    application
 }
 
 repositories { mavenCentral() }
@@ -10,3 +11,6 @@ java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaV
 dependencies {
     testImplementation("junit:junit:4.13.2")
 }
+
+// Desktop replay of phone recordings: ./gradlew run --args="stomp-log.csv [key=value …]"
+application { mainClass.set("uk.neatlines.stompbox.debug.ReplayKt") }

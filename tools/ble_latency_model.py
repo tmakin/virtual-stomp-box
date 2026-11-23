@@ -37,6 +37,26 @@ def sample(link: str, ci_ms: float, rnd: random.Random) -> float:
     return t
 
 
+# --- WitMotion WT901 BLE (BWT901BLE5.0), detection on the phone -----------------
+WT_ODR_HZ = 200          # fastest return rate
+WT_FILTER = 1.5          # 188 Hz bandwidth setting: ~1-2 ms group delay (assumed)
+WT_INTERNAL = 2.0        # MCU fusion + UART to the BLE module (20 bytes at 115200 baud ~1.7 ms), assumed
+CLOCK_ERR_SD = 0.3       # SampleClock estimate error, from the unit-test simulation
+
+
+def sample_wt901(ci_ms: float, rnd: random.Random, steady_ms: float = 0.0) -> float:
+    """Impact -> sound decision. steady_ms > 0 models STEADY timing at that delay."""
+    phase = rnd.uniform(0, 1000 / WT_ODR_HZ)  # impact lands somewhere inside a sample period
+    t = phase + WT_FILTER + WT_INTERNAL
+    if steady_ms:
+        # Fires at estimated sample time + delay; the BLE wait drops out, only phase and clock error remain.
+        return t + steady_ms + rnd.gauss(0, CLOCK_ERR_SD)
+    t += rnd.uniform(0, ci_ms)
+    while rnd.random() < PACKET_LOSS:
+        t += ci_ms
+    return t + AIR_AND_CONTROLLER + rnd.lognormvariate(0, HOST_TAIL_SIGMA) * HOST_MEDIAN["gatt"]
+
+
 def pct(xs, p):
     return xs[min(len(xs) - 1, int(p / 100 * len(xs)))]
 
@@ -53,6 +73,11 @@ def main():
         xs = sorted(sample(link, ci, rnd) for _ in range(a.n))
         med, p5, p95, p99 = statistics.median(xs), pct(xs, 5), pct(xs, 95), pct(xs, 99)
         print(f"{link:5} {ci or '-':>6} {med:7.1f} {p95:6.1f} {p99:6.1f} {p95 - p5:9.1f} (±{(p95 - p5) / 2:.1f})")
+    print("\nWT901 BLE, 200 Hz, detection on the phone")
+    for label, ci, steady in (("immediate", 11.25, 0), ("immediate", 15, 0), ("steady 20ms", 11.25, 20), ("steady 25ms", 15, 25)):
+        xs = sorted(sample_wt901(ci, rnd, steady) for _ in range(a.n))
+        med, p5, p95, p99 = statistics.median(xs), pct(xs, 5), pct(xs, 95), pct(xs, 99)
+        print(f"{label:11} CI {ci:5} {med:7.1f} {p95:6.1f} {p99:6.1f} {p95 - p5:9.1f} (±{(p95 - p5) / 2:.1f})")
 
 
 if __name__ == "__main__":

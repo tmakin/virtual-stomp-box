@@ -41,6 +41,9 @@ class LatencyProbe(private val sampleRate: Int = 48_000) {
     val heard: Int get() = onsets.size
     val received: Int get() = events.size
 
+    /** Impact times heard so far (System.nanoTime), e.g. to add to a stomp log as `o` rows. */
+    fun onsetNanos(): List<Long> = onsets.toList()
+
     /** Call from the tap source's thread with System.nanoTime() at arrival. */
     fun onEvent(arrivalNanos: Long) {
         if (running) events += arrivalNanos
