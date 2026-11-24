@@ -14,8 +14,11 @@ package uk.neatlines.stompbox.latency
  *    opposite signs.
  *
  * Feed it from any thread; call [poll] now and then (the UI refresh). A stomp is scored once
- * [settleNanos] have passed, so late mic onsets are in. Stomp at most about once a second, or an
- * impact can be paired with the previous stomp's drum.
+ * [settleNanos] have passed, so late mic onsets are in.
+ *
+ * The impact must come after the previous stomp's drum (and its ringing). Otherwise, when the mic
+ * misses an impact, the previous drum is taken for it and *detect* reads as the stomp period minus
+ * the output delay. Builds up to #11 had that flaw. Such stomps are counted in [unpaired].
  */
 class LatencyMeter(
     private val searchNanos: Long = 1_000_000_000L,
@@ -42,6 +45,8 @@ class LatencyMeter(
     private val stomps = ArrayList<Stomp>()
     private val results = ArrayDeque<Measurement>()
     var unpaired = 0; private set
+    /** No impact may be taken from before this: the end of the previous stomp's drum. */
+    private var floorNanos = Long.MIN_VALUE
 
     private val sampleTimes = ArrayList<Long>()
     private val sampleJolts = ArrayList<Double>()
@@ -55,15 +60,17 @@ class LatencyMeter(
     @Synchronized fun stomp(detectedNanos: Long, playNanos: Long) { stomps += Stomp(detectedNanos, playNanos) }
 
     @Synchronized fun poll(nowNanos: Long): List<Measurement> {
-        val due = stomps.filter { nowNanos - it.playNanos >= settleNanos }
+        val due = stomps.filter { nowNanos - it.playNanos >= settleNanos }.sortedBy { it.detectedNanos }
         stomps.removeAll(due.toSet())
         for (s in due) {
             // Impact: the last sound before the detection. Drum: the first sound after play().
             // An impact can ring and re-trigger the onset detector; step back to the first onset of the cluster.
-            var i = onsets.indexOfLast { it <= s.detectedNanos && s.detectedNanos - it <= searchNanos }
-            while (i > 0 && onsets[i] - onsets[i - 1] < clusterNanos) i--
+            val floor = floorNanos
+            var i = onsets.indexOfLast { it <= s.detectedNanos && s.detectedNanos - it <= searchNanos && it > floor }
+            while (i > 0 && onsets[i] - onsets[i - 1] < clusterNanos && onsets[i - 1] > floor) i--
             val impact = onsets.getOrNull(i)
             val drum = onsets.firstOrNull { it >= s.playNanos && it - s.playNanos <= searchNanos }
+            floorNanos = maxOf(floor, (drum ?: s.playNanos) + clusterNanos)
             if (impact == null) { unpaired++; continue }
             val first = sampleTimes.indices.firstOrNull { sampleTimes[it] >= impact && sampleJolts[it] >= joltG }
             val maxJolt = first?.let { f ->
@@ -87,12 +94,12 @@ class LatencyMeter(
         return results.toList()
     }
 
-    @Synchronized fun clear() { sampleTimes.clear(); sampleJolts.clear(); onsets.clear(); stomps.clear(); results.clear(); unpaired = 0 }
+    @Synchronized fun clear() { sampleTimes.clear(); sampleJolts.clear(); onsets.clear(); stomps.clear(); results.clear(); unpaired = 0; floorNanos = Long.MIN_VALUE }
 
     companion object {
         /** "detect 380 ms · output 32 ms · total 412 ms (median of 12)". */
-        fun summary(r: List<Measurement>): String {
-            if (r.isEmpty()) return "no stomps measured yet"
+        fun summary(r: List<Measurement>, unpaired: Int = 0): String {
+            if (r.isEmpty()) return if (unpaired > 0) "no stomps measured yet ($unpaired with no impact heard)" else "no stomps measured yet"
             fun med(v: List<Double>) = v.sorted().let { if (it.isEmpty()) null else it[it.size / 2] }
             val d = med(r.map { it.detectMs })
             val o = med(r.mapNotNull { it.outputMs })
@@ -101,7 +108,8 @@ class LatencyMeter(
             val last = r.last()
             val j = med(r.mapNotNull { it.firstJoltMs })
             val g = med(r.mapNotNull { it.maxJoltG })
-            return "median of ${r.size}: detect ${f(d)} · output ${f(o)} · total ${f(t)}\n" +
+            val miss = if (unpaired > 0) " ($unpaired more with no impact heard)" else ""
+            return "median of ${r.size}$miss: detect ${f(d)} · output ${f(o)} · total ${f(t)}\n" +
                 "last: detect ${f(last.detectMs)} · output ${f(last.outputMs)} · total ${f(last.totalMs)}\n" +
                 "impact in sensor data: first jolt at ${f(j)}, max %s".format(g?.let { "%.2f g".format(java.util.Locale.US, it) } ?: "—")
         }

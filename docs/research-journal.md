@@ -191,9 +191,43 @@ impact in sensor data: first jolt at 420 ms, max 1.09 g
 - **Prediction:** at MTU 23, frames/notification ≈ 1 and *detect* drops to roughly 30–80 ms. If it
   doesn't, compare the ping round trip between the modes.
 
+## 2026-11-24: Latency test 7 (build #11 `26adf38`, link modes and ping)
+
+```
+BLE (MTU 23, 1M PHY, MTU 23): interval 15.00 ms, peripheral latency 1, 7.97 frames/notification
+ping (register read round trip): median 99 ms, min 51, max 163 (n=16)
+latency: median of 10: detect 377 ms · output 102 ms · total 481 ms
+impact in sensor data: first jolt at 372 ms, max 3.08 g
+
+BLE (MTU 247, 2M PHY, MTU 247): interval 15.00 ms, peripheral latency 1, 7.95 frames/notification
+ping (register read round trip): median 80 ms, min 34, max 175 (n=15)
+latency: median of 10: detect 375 ms · output 98 ms · total 470 ms
+impact in sensor data: first jolt at 354 ms, max 4.44 g
+```
+
+- **The MTU setting didn't take effect:** still ~8 frames per notification in "MTU 23" mode, which
+  20-byte packets can't carry. Android 14+ negotiates a large MTU itself on connect. The WitMotion
+  app gets the same, so **hypothesis E is out**: the MTU isn't the difference.
+- **Ping ≈ 80–100 ms.** A command goes phone → sensor → phone in about 100 ms, through the same
+  notify path as the data. The link and the Android stack are fast.
+- **Suspected measurement flaw.** `LatencyMeter` took the impact as the *last sound before
+  detection*. If the mic misses the impact, that's the **previous stomp's drum**, and *detect*
+  reads as *stomp period − output*. At ~125 bpm that is ≈ 480 − 100 ≈ 380 ms, and *total* reads as
+  the stomp period (470–590 ms across tests). That would explain:
+  - why *detect* never moved with rate, flush, connection or MTU;
+  - why the WitMotion app shows no lag;
+  - the 100 ms ping.
+  The *first jolt* figure is measured from the same (wrong) impact, so it agreed with *detect*
+  and didn't catch this.
+- **Fix (this commit):** an impact must come after the previous stomp's drum (plus 80 ms of
+  ringing). A stomp with no impact heard in that window is counted, not scored, and the summary
+  shows the count. Two new tests cover a 500 ms rhythm with and without the impacts heard.
+- **Earlier latency figures (tests 1–7) are suspect** until re-measured with this build.
+
 ## Open questions
 
-- Does MTU 23 remove the delay (hypothesis E)? Is the register-read round trip ~420 ms (send path) or short (old data)?
+- With the fixed meter: what is the real *detect*? Slow single stomps (one every ~2 s) are the cleanest test.
+- If the impact often goes unheard, the mic onset detector needs tuning for footfalls.
 - If it doesn't: the delay is inside the sensor firmware. Check WitMotion's own app for the
   same lag (tap the sensor and watch the graph). Ask WitMotion support, or consider another sensor.
 - Make sure the WitMotion app (or anything else) isn't also connected: the manual warns of lag

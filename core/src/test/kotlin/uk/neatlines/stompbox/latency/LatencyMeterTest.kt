@@ -43,6 +43,32 @@ class LatencyMeterTest {
         assertEquals(1, m.unpaired)
     }
 
+    @Test fun missedImpactIsNotPairedWithPreviousDrum() {
+        // Stomping every 500 ms, real detect 50 ms, output 100 ms; the mic hears only the drums.
+        // The old meter took each previous drum for the impact and reported detect = 350 ms.
+        val m = LatencyMeter()
+        for (k in 0 until 6) {
+            val t = 10_000 * ms + k * 500 * ms
+            m.stomp(t + 50 * ms, t + 50 * ms)
+            m.onset(t + 150 * ms)
+        }
+        assertEquals(0, m.poll(20_000 * ms).size)
+        assertEquals(6, m.unpaired)
+    }
+
+    @Test fun fastRhythmWithImpactsHeard() {
+        val m = LatencyMeter()
+        for (k in 0 until 6) {
+            val t = 10_000 * ms + k * 500 * ms
+            m.onset(t)
+            m.stomp(t + 50 * ms, t + 50 * ms)
+            m.onset(t + 150 * ms)
+        }
+        val r = m.poll(20_000 * ms)
+        assertEquals(6, r.size)
+        r.forEach { assertEquals(50.0, it.detectMs, 0.01); assertEquals(150.0, it.totalMs!!, 0.01) }
+    }
+
     @Test fun ringingImpactUsesFirstOnset() {
         val m = LatencyMeter()
         m.onset(1000 * ms); m.onset(1040 * ms); m.onset(1090 * ms)   // one impact, ringing

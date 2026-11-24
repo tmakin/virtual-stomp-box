@@ -165,7 +165,7 @@ class StompTuningActivity : Activity() {
             status.text = statusText()
             val r = engine.latency.poll(System.nanoTime())
             if (engine.isLatencyTesting || r.isNotEmpty()) {
-                latencyText.text = LatencyMeter.summary(r) +
+                latencyText.text = LatencyMeter.summary(r, engine.latency.unpaired) +
                     (if (engine.latency.unpaired > 0) "\n${engine.latency.unpaired} stomps with no impact heard" else "")
             }
             engine.recentStomps.let { synchronized(it) { it.lastOrNull() } }?.let { e ->
@@ -203,7 +203,7 @@ class StompTuningActivity : Activity() {
     }
 
     private fun copyStatus() {
-        val text = statusText() + "\n\nlatency: " + LatencyMeter.summary(engine.latency.poll(System.nanoTime())) +
+        val text = statusText() + "\n\nlatency: " + LatencyMeter.summary(engine.latency.poll(System.nanoTime()), engine.latency.unpaired) +
             "\nconfig: " + engine.config.toMap().entries.joinToString(" ") { "${it.key}=${it.value}" } +
             "\nphone: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE}"
         getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("stomp status", text))
