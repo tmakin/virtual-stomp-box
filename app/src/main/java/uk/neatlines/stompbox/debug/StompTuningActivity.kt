@@ -183,7 +183,9 @@ class StompTuningActivity : Activity() {
             }
             append("\nmode ${c.mode}  feature ${c.feature}  timing ${c.timing}")
             if (c.timing == Timing.STEADY) append(" (late ${engine.pipeline.timing.late})")
-            append("  audio buffer %.1f ms".format((application as StompApp).synth.bufferMs))
+            val synth = (application as StompApp).synth
+            append("\naudio: buffer %.1f ms, output latency %.0f ms, fast path %s".format(
+                synth.bufferMs, synth.outputLatencyMs, if (synth.lowLatencyGranted) "yes" else "NO"))
             append("\ncalibration: angle error %.1f°%s".format(p.conventionErrorDeg, if (p.conventionErrorDeg > 10) " (angles ignored)" else ""))
         }
     }

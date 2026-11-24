@@ -132,6 +132,11 @@ class WitBleSource(
             handler.postDelayed({ writeNow(Wit.readRegister(Wit.REG_BANDWIDTH)) }, 600)
             handler.postDelayed({ configureIfNeeded() }, 1200)
             handler.postDelayed(batteryPoll, 1500)
+            // The sensor can ask for its own (slower) connection parameters after connecting; the
+            // first phone test saw a 45 ms interval. Ask again for the fast one once it has settled.
+            for (d in longArrayOf(2500, 6000)) handler.postDelayed({
+                gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+            }, d)
         }
 
         // Android 13+ delivers the value directly; arrival time is taken before anything else.

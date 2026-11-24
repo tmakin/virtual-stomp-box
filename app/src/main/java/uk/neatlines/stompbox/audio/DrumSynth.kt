@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.os.Process
 import uk.neatlines.stompbox.stomp.StompOutput
@@ -53,6 +54,8 @@ class DrumSynth(context: Context) : StompOutput {
             Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
             val buf = FloatArray(burst)
             val voices = ArrayList<Voice>()
+            val ts = AudioTimestamp()
+            var written = 0L
             track.play()
             while (true) {
                 while (true) voices += pending.poll() ?: break
@@ -67,9 +70,21 @@ class DrumSynth(context: Context) : StompOutput {
                 }
                 for (i in buf.indices) buf[i] = buf[i].coerceIn(-1f, 1f)
                 track.write(buf, 0, burst, AudioTrack.WRITE_BLOCKING)
+                written += burst
+                // Frames written but not yet out of the speaker, from the track's own timestamp.
+                if (track.getTimestamp(ts)) {
+                    val queued = (written - ts.framePosition) * 1e3 / rate
+                    outputLatencyMs = queued - (System.nanoTime() - ts.nanoTime) / 1e6
+                }
             }
         }, "drum-synth").apply { isDaemon = true; start() }
     }
+
+    /** Write → speaker delay estimated from AudioTrack timestamps, ms (NaN until known). */
+    @Volatile var outputLatencyMs = Double.NaN; private set
+
+    /** True if Android granted the low-latency (fast mixer) path this track asked for. */
+    val lowLatencyGranted: Boolean get() = track.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY
 
     /** Output latency the platform reports for this track's buffer, ms. */
     val bufferMs: Double get() = track.bufferSizeInFrames * 1000.0 / rate
