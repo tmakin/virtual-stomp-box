@@ -174,6 +174,7 @@ class StompTuningActivity : Activity() {
     private fun statusText(): String {
         val c = engine.config; val p = engine.pipeline.placement; val src = engine.source; val link = engine.link()
         return buildString {
+            append("build ${uk.neatlines.stompbox.BuildConfig.BUILD_LABEL}\n")
             append("${src.deviceName ?: "-"}: ${src.status}")
             if (!src.batteryVolts.isNaN()) append("  battery %.2f V".format(src.batteryVolts))
             append("\nsensor set to ${engine.rateHz} Hz (rate reg ${src.rateRegister}, bandwidth reg ${src.bandwidthRegister})")

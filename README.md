@@ -9,7 +9,9 @@ Every push builds a debug APK and publishes it as a pre-release named `apk-<bran
 example `apk-main`.
 
 1. On the Pixel, open the repo's **Releases** page on github.com, signed in. The repo is private.
-2. Tap `stompbox.apk` under the newest `apk-…` release.
+2. Tap `stompbox-<run>-<date>-<commit>.apk` under the newest `apk-…` release.
+   The run number and commit also appear at the top of the app's status, so test results can be
+   matched to a build.
 3. Tap **Install**. The first time, allow Chrome to "install unknown apps".
 4. Open **Stomp Box** and tap **Connect sensor**. Allow Bluetooth when asked, with the WT901
    switched on.

@@ -89,6 +89,7 @@ class MainActivity : Activity() {
         override fun run() {
             val e = app.engine; val s = e.source
             status.text = buildString {
+                append("Build ${BuildConfig.BUILD_LABEL}\n")
                 append("Sensor: ${s.deviceName ?: "-"} · ${s.status}")
                 if (!s.batteryVolts.isNaN()) append(" · battery %.2f V".format(s.batteryVolts))
                 append("\nMode ${e.config.mode} · timing ${e.config.timing} · ${e.rateHz} Hz · stomps ${e.pipeline.detector.triggers}")

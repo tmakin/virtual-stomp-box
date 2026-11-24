@@ -14,6 +14,11 @@ android {
         // CI run number, so every downloaded build installs over the previous one.
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "0.1.$versionCode"
+        // Shown in the app's status line, so a test result can be matched to its build.
+        val sha = (System.getenv("GITHUB_SHA") ?: "local").take(7)
+        val built = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
+            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'"))
+        buildConfigField("String", "BUILD_LABEL", "\"#$versionCode $sha $built\"")
     }
 
     // A fixed debug key checked into the repo, so APKs built on different CI runners can be
@@ -29,6 +34,8 @@ android {
     buildTypes {
         debug { signingConfig = signingConfigs.getByName("debug") }
     }
+
+    buildFeatures { buildConfig = true }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

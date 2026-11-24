@@ -38,8 +38,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="apk-${GITHUB_REF_NAME//\//-}"
-          cp app/build/outputs/apk/debug/app-debug.apk stompbox.apk
+          # Run number, UTC build time and commit in the file name, matching the app's status line.
+          APK="stompbox-${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$APK"
           gh release delete "$TAG" --cleanup-tag --yes || true
-          gh release create "$TAG" stompbox.apk --prerelease --target "$GITHUB_SHA" \
+          gh release create "$TAG" "$APK" --prerelease --target "$GITHUB_SHA" \
             --title "Stomp Box test build: $GITHUB_REF_NAME #$GITHUB_RUN_NUMBER" \
-            --notes "Debug build of ${GITHUB_SHA::7} from $GITHUB_REF_NAME. On the phone: tap stompbox.apk, then Install (or Update)."
+            --notes "Debug build of ${GITHUB_SHA::7} from $GITHUB_REF_NAME. On the phone: tap $APK, then Install (or Update). The app's status line shows the same build number and commit."
