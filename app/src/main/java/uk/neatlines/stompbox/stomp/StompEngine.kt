@@ -6,7 +6,6 @@ import android.os.Process
 import android.util.Log
 import uk.neatlines.stompbox.debug.LinkStats
 import uk.neatlines.stompbox.debug.StompLogWriter
-import uk.neatlines.stompbox.input.LinkMode
 import uk.neatlines.stompbox.input.WitBleSource
 import uk.neatlines.stompbox.latency.LatencyMeter
 import uk.neatlines.stompbox.latency.LatencyProbe
@@ -41,15 +40,6 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         get() = pipeline.rateHz
         set(v) { prefs.edit().putInt("rateHz", v).apply(); source.rateHz = v; pipeline.rateHz = v }
 
-    /** BLE link setup (MTU / PHY); persisted, and changing it reconnects. */
-    var linkMode: LinkMode
-        get() = source.linkMode
-        set(v) { prefs.edit().putString("linkMode", v.name).apply(); source.linkMode = v }
-
-    init {
-        source.linkMode = runCatching { LinkMode.valueOf(prefs.getString("linkMode", null)!!) }.getOrDefault(LinkMode.DEFAULT_MTU)
-    }
-
     /** Latest stomps for the UI, newest last. */
     val recentStomps = ArrayDeque<StompEvent>()
     /** For the home screen's flash; called on the GATT thread. */
@@ -77,15 +67,14 @@ class StompEngine(private val context: Context, private val output: StompOutput)
             latency.sample(arrivalNanos, kotlin.math.sqrt((dx * dx + dy * dy + dz * dz).toDouble()))
         }
         lastSample = s
-        if (source.flushing) return
-        recorder?.sample(arrivalNanos, s)
+        recorder?.let { w -> recordExec?.execute { w.sample(arrivalNanos, s) } }
         calibration?.add(s)
         pipeline.onSample(s, arrivalNanos)
     }
 
     private fun onStomp(e: StompEvent, fireAtNanos: Long) {
         if (fireAtNanos <= System.nanoTime()) output.play(e.note, e.velocity) else scheduler.schedule(fireAtNanos, e)
-        recorder?.stomp(e, fireAtNanos)
+        recorder?.let { w -> recordExec?.execute { w.stomp(e, fireAtNanos) } }
         if (latencyProbe != null) latency.stomp(e.arrivalNanos, maxOf(fireAtNanos, e.arrivalNanos))
         synchronized(recentStomps) { recentStomps.addLast(e); while (recentStomps.size > 50) recentStomps.removeFirst() }
         onStompUi?.invoke(e)
@@ -151,6 +140,8 @@ class StompEngine(private val context: Context, private val output: StompOutput)
     // ---- recording --------------------------------------------------------------------------
 
     @Volatile private var recorder: StompLogWriter? = null
+    /** Formats and writes the log off the GATT thread, so disk writes can't stall the sensor path. */
+    @Volatile private var recordExec: java.util.concurrent.ExecutorService? = null
     private var recordFile: File? = null
     private var probe: LatencyProbe? = null
 
@@ -160,7 +151,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
     fun startRecording(withMic: Boolean): File {
         val dir = File(context.getExternalFilesDir(null), "stomp-logs").apply { mkdirs() }
         val f = File(dir, "stomp-%tY%<tm%<td-%<tH%<tM%<tS.csv".format(java.util.Date()))
-        val w = StompLogWriter(f.bufferedWriter(bufferSize = 1 shl 16))   // large buffer: fewer disk writes on the GATT thread
+        val w = StompLogWriter(f.bufferedWriter(bufferSize = 1 shl 16))
         w.header(config, pipeline.placement, mapOf(
             "rateHz" to "$rateHz", "rateReg" to "${source.rateRegister}", "bandwidthReg" to "${source.bandwidthRegister}",
             "batteryV" to "${source.batteryVolts}", "device" to (source.deviceName ?: "?"),
@@ -169,7 +160,9 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         val micAllowed = context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
         if (withMic && micAllowed) probe = LatencyProbe().also { it.start() }
-        recordFile = f; recorder = w
+        recordFile = f
+        recordExec = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "stomp-log") }
+        recorder = w
         return f
     }
 
@@ -192,6 +185,8 @@ class StompEngine(private val context: Context, private val output: StompOutput)
     fun stopRecording(): File? {
         val w = recorder ?: return null
         recorder = null
+        recordExec?.let { it.shutdown(); it.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS) }
+        recordExec = null
         probe?.let { p -> p.stop(); p.onsetNanos().forEach(w::onset) }
         probe = null
         w.close()
@@ -237,5 +232,5 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         Placement(v(p[0]), AngleConvention(c[0], c[1]), p[2].toDouble(), p[3].takeIf { it.isNotEmpty() }?.let(::v))
     }.getOrDefault(Placement.DEFAULT)
 
-    companion object { val RATES = listOf(200, 100, 50, 10) }
+    companion object { val RATES = listOf(200, 100, 50) }
 }

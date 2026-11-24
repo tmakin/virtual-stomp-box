@@ -106,10 +106,6 @@ class StompTuningActivity : Activity() {
                 engine.rateHz = r[(r.indexOf(engine.rateHz) + 1) % r.size]
             },
         ))
-        col.addView(cycler({ "BLE link: ${engine.linkMode.label}" }) {
-            val m = uk.neatlines.stompbox.input.LinkMode.entries
-            engine.linkMode = m[(engine.linkMode.ordinal + 1) % m.size]
-        })
         col.addView(button("Calibrate: stand still for 1 s") { b ->
             b.text = "hold still…"
             engine.calibrateRest { runOnUiThread { b.text = "Calibrate: stand still for 1 s ✓" } }
@@ -130,13 +126,12 @@ class StompTuningActivity : Activity() {
             button("Share last recording") { lastFile?.let(::share) ?: toast("Record something first") },
             button("Copy status") { copyStatus() },
         ))
-        col.addView(button("Flush sensor queue (experiment)") { engine.source.flush() })
         saved = TextView(this).apply { textSize = 12f; setTextIsSelectable(true) }
         col.addView(saved)
 
         // ---- detector
         col.addView(header("Detector"))
-        slider(col, "Min threshold", "g", 0.2, 5.0, 0.05, { it.minThresholdG }) { c, v -> c.copy(minThresholdG = v) }
+        slider(col, "Min threshold", "g", 0.2, 2.0, 0.02, { it.minThresholdG }) { c, v -> c.copy(minThresholdG = v) }
         slider(col, "Noise factor", "×", 2.0, 15.0, 0.5, { it.noiseFactor }) { c, v -> c.copy(noiseFactor = v) }
         slider(col, "Dead time", "ms", 30.0, 300.0, 5.0, { it.deadTimeMs }) { c, v -> c.copy(deadTimeMs = v) }
         slider(col, "High-pass", "Hz", 0.5, 20.0, 0.5, { it.highPassHz }) { c, v -> c.copy(highPassHz = v) }
@@ -151,7 +146,18 @@ class StompTuningActivity : Activity() {
         engine.pipeline.detector.onDebug = plot::add
         latencyButton.text = if (engine.isLatencyTesting) "Stop latency test" else "Start latency test"
         if (engine.isLatencyTesting) pacer.post(pace)
-        status.post(refresh)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!::engine.isInitialized) return
+        uk.neatlines.stompbox.ui.UiStallWatch.start(); status.removeCallbacks(refresh); status.post(refresh)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        uk.neatlines.stompbox.ui.UiStallWatch.stop()
+        if (::engine.isInitialized) status.removeCallbacks(refresh)
     }
 
     override fun onDestroy() {
@@ -215,11 +221,11 @@ class StompTuningActivity : Activity() {
             append("${src.deviceName ?: "-"}: ${src.status}")
             if (!src.batteryVolts.isNaN()) append("  battery %.2f V".format(src.batteryVolts))
             append("\nsensor set to ${engine.rateHz} Hz (rate reg ${src.rateRegister}, bandwidth reg ${src.bandwidthRegister})")
-            append("\nBLE (${src.linkMode.label}, MTU ${src.mtu}): interval %s, peripheral latency %s, timeout %s, %.2f frames/notification, flushes %d".format(
+            append("\nBLE: MTU ${src.mtu}, interval %s, peripheral latency %s, timeout %s, %.2f frames/notification".format(
                 if (src.connIntervalMs < 0) "?" else "%.2f ms".format(src.connIntervalMs),
                 if (src.connLatency < 0) "?" else "${src.connLatency}",
                 if (src.connTimeoutMs < 0) "?" else "${src.connTimeoutMs} ms",
-                src.framesPerNotification, src.flushes))
+                src.framesPerNotification))
             append("\nping (register read round trip): ${src.pingSummary}")
             append("\n").append(link.format())
             if (src.status == "streaming" && link.samples > 400 && link.sampleRateHz < 0.9 * engine.rateHz) {
@@ -229,8 +235,11 @@ class StompTuningActivity : Activity() {
             append("\nmode ${c.mode}  feature ${c.feature}  timing ${c.timing}")
             if (c.timing == Timing.STEADY) append(" (late ${engine.pipeline.timing.late})")
             val synth = (application as StompApp).synth
-            append("\naudio: buffer %.1f ms, output latency %.0f ms, fast path %s".format(
-                synth.bufferMs, synth.outputLatencyMs, if (synth.lowLatencyGranted) "yes" else "NO"))
+            append("\naudio: ${synth.deviceLabel}, buffer %.1f ms, output latency %.0f ms, fast path %s, underruns %d".format(
+                synth.bufferMs, synth.outputLatencyMs, if (synth.lowLatencyGranted) "yes" else "NO", synth.underruns))
+            append("\nstalls: BLE gaps >250 ms %d (longest %.0f ms), reconnects %d, failed writes %d; UI freezes >200 ms %d (longest %.0f ms)".format(
+                src.longGaps, src.longestGapMs, src.reconnects, src.failedWrites,
+                uk.neatlines.stompbox.ui.UiStallWatch.freezes, uk.neatlines.stompbox.ui.UiStallWatch.longestMs))
             append("\ncalibration: angle error %.1f°%s".format(p.conventionErrorDeg, if (p.conventionErrorDeg > 10) " (angles ignored)" else ""))
         }
     }
@@ -262,9 +271,9 @@ class StompTuningActivity : Activity() {
     private fun slider(parent: LinearLayout, name: String, unit: String, min: Double, max: Double, step: Double,
                        get: (StompConfig) -> Double, put: (StompConfig, Double) -> StompConfig) {
         val label = TextView(this)
-        val bar = SeekBar(this).apply { this.max = ((max - min) / step).toInt() }
+        val bar = SeekBar(this).apply { this.max = kotlin.math.round((max - min) / step).toInt() }
         fun show(v: Double) { label.text = "$name: %.2f %s".format(v, unit) }
-        val sync = { val v = get(engine.config); bar.progress = ((v - min) / step).toInt(); show(v) }
+        val sync = { val v = get(engine.config); bar.progress = kotlin.math.round((v - min) / step).toInt(); show(v) }
         bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
                 if (!fromUser) return

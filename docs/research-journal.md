@@ -256,12 +256,37 @@ impact in sensor data: first jolt at 55 ms, max 2.59 g
 - **Cleanup due:** the flush, the link-mode setting (the MTU can't be kept at 23 on Android 14+)
   and the 10 Hz rate were for the void hypotheses.
 
+## 2026-11-24: Cleanup, USB audio, stall hunt
+
+Feedback: remove the experiment code; optimise the audio output for USB-C (next test is through
+an amp); the app stalls intermittently; cap the threshold slider at 2.0 g.
+
+- **Removed:** the queue flush (it stopped the data for 2.5 s about 7 s after *every* connect,
+  including reconnects), the BLE link setting, the 10 Hz rate and the repeated connection-priority
+  requests. The ping stays, every 5 s.
+- **Possible causes of stalls, found in the code and fixed:**
+  - The automatic flush, as above.
+  - **Timers piled up on reconnect.** The battery poll and ping were never cancelled when the link
+    dropped, so every reconnect added another set.
+  - **Colliding BLE writes.** Android takes one GATT write at a time and refuses the rest. Setup
+    commands, battery reads and pings went out on independent timers, so some were dropped
+    silently. All writes now go through one queue, each waiting for the previous one's reply.
+  - **Recording wrote to disk on the Bluetooth callback thread.** It now runs on its own thread.
+- **Stall diagnostics:** the status now has a `stalls:` line with the BLE gaps over 250 ms (and the
+  longest), reconnects, failed writes, and UI freezes over 200 ms. The `audio:` line counts underruns.
+  The next stall report will show which part stalled.
+- **USB / wired audio:** the drum synth picks a USB interface, USB-C headphones or a wired / line
+  output as soon as one is plugged in, and rebuilds its track for that device. The track is 48 kHz
+  stereo (some USB interfaces take only two channels). The buffer starts at two bursts and grows by
+  one burst on each underrun, as Oboe's latency tuner does. The `audio:` line names the device.
+- **Threshold slider:** 0.2–2.0 g in 0.02 g steps.
+
 ## Open questions
 
 - Can the detector fire on the first burst (cut ~30 ms)? Look at a recording of the samples
   around an impact.
-- Output: measure wired / USB-C audio (AudioTrack timestamp figure, since the mic can't hear
-  headphones); try AAudio/Oboe MMAP.
+- Output through USB-C into an amp: how much of the 100 ms goes? Then AAudio MMAP if worth it.
+- Stalls: what does the `stalls:` line show when one happens?
 - If it doesn't: the delay is inside the sensor firmware. Check WitMotion's own app for the
   same lag (tap the sensor and watch the graph). Ask WitMotion support, or consider another sensor.
 - Make sure the WitMotion app (or anything else) isn't also connected: the manual warns of lag

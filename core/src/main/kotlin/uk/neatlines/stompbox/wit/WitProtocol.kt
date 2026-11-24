@@ -56,9 +56,6 @@ object Wit {
     fun configure(rateHz: Int, bandwidthHz: Int): List<ByteArray> =
         listOf(UNLOCK, setRate(rateHz), UNLOCK, setBandwidth(bandwidthHz), SAVE)
 
-    /** Change the rate without SAVE (RAM only), e.g. to drain the sensor's send queue for a moment. */
-    fun setRateNoSave(hz: Int): List<ByteArray> = listOf(UNLOCK, setRate(hz))
-
     /** Battery voltage → percent, same table as the WitMotion SDK. */
     fun batteryPercent(volts: Double): Int = when {
         volts > 3.96 -> 100; volts > 3.93 -> 90; volts > 3.87 -> 75; volts > 3.82 -> 60

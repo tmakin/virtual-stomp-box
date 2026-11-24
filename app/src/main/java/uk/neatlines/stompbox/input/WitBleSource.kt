@@ -8,6 +8,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
@@ -26,8 +27,10 @@ import uk.neatlines.stompbox.wit.WitSample
  * Replaces the WitMotion SDK's DeviceModel, which rounds values, keeps only the latest sample in a
  * map, and polls magnetometer and battery registers every 500 ms. This class:
  *  - takes the arrival time first thing in the GATT callback and parses on that thread (no hop);
- *  - asks for CONNECTION_PRIORITY_HIGH (11.25–15 ms interval) and a 247-byte MTU so several frames
- *    fit in one connection event;
+ *  - asks for CONNECTION_PRIORITY_HIGH (11.25–15 ms interval), the 2M PHY and a 247-byte MTU. The
+ *    sensor still sends one notification of ~8 frames about every 44 ms (its own packing timer);
+ *  - sends every write through one queue, one at a time: Android rejects a write while another
+ *    is in flight, which silently dropped setup commands before;
  *  - reads back the rate and bandwidth registers and writes them only when they differ
  *    (each write ends with SAVE, so it would otherwise rewrite flash on every connect);
  *  - reads the battery every 10 s.
@@ -45,33 +48,30 @@ class WitBleSource(
     /** Output rate to set on the sensor. Changing it while connected reconfigures the sensor. */
     @Volatile var rateHz: Int = rateHz
         set(v) { require(v in Wit.RATE_CODES); field = v; handler.post { configureIfNeeded() } }
-    /**
-     * How the connection is set up; changing it reconnects. Experiment: the WitMotion app shows no
-     * lag, and it (as far as we know) keeps the default 23-byte MTU and 1M PHY, so the sensor sends
-     * one frame per notification. With MTU 247 the sensor packs ~8 frames per notification.
-     */
-    @Volatile var linkMode: LinkMode = LinkMode.DEFAULT_MTU
-        set(v) { field = v; handler.post { gatt?.disconnect() } }   // the disconnect handler reconnects
-    @Volatile var mtu = 23; private set
     @Volatile var status: String = "idle"; private set
     @Volatile var batteryVolts: Double = Double.NaN; private set
     @Volatile var rateRegister: Int = -1; private set
     @Volatile var bandwidthRegister: Int = -1; private set
     @Volatile var deviceName: String? = null; private set
+    @Volatile var mtu = 23; private set
     /** Connection parameters as last reported by the stack (hidden callback; -1 until reported). */
     @Volatile var connIntervalMs: Double = -1.0; private set
     @Volatile var connLatency: Int = -1; private set
     @Volatile var connTimeoutMs: Int = -1; private set
     @Volatile var notifications = 0L; private set
-    /** True while [flush] has the sensor at 1 Hz; samples then are not real-time and should be ignored. */
-    @Volatile var flushing = false; private set
-    @Volatile var flushes = 0; private set
-    /**
-     * Round trip of a register read (write `FF AA 27 40` → `55 71` reply), timed every 2 s. The
-     * reply comes back on the same notify path as the data, so if the ~420 ms data delay is a send
-     * queue in the sensor, the round trip includes it; if the round trip is short, the delay is in
-     * the sensor's sampling or filtering instead.
-     */
+    private var framesAtConnect = 0L
+    val framesPerNotification: Double get() = if (notifications == 0L) 0.0 else (parser.frames - framesAtConnect).toDouble() / notifications
+
+    // ---- stall diagnostics: is a stall in the link (gaps, reconnects) or elsewhere?
+    /** Times the link dropped and was reconnected since [start]. */
+    @Volatile var reconnects = 0; private set
+    /** Gaps between notifications over [GAP_MS] while streaming, and the longest gap, ms. */
+    @Volatile var longGaps = 0; private set
+    @Volatile var longestGapMs = 0.0; private set
+    /** Writes Android refused or that got no reply in time. */
+    @Volatile var failedWrites = 0; private set
+
+    /** Register-read round trip (write `FF AA 27 40` → `55 71` reply), timed every 5 s. */
     val pingSummary: String get() {
         val v = synchronized(pings) { pings.sorted() }
         if (v.isEmpty()) return "no replies yet"
@@ -79,16 +79,15 @@ class WitBleSource(
     }
     private val pings = ArrayDeque<Double>()
     @Volatile private var pingSentAt = 0L
-    private var framesAtConnect = 0L
-    val framesPerNotification: Double get() = if (notifications == 0L) 0.0 else (parser.frames - framesAtConnect).toDouble() / notifications
     var onStatus: ((String) -> Unit)? = null
 
     private val manager = context.getSystemService(BluetoothManager::class.java)
     private val worker = HandlerThread("wit-ble").apply { start() }
     private val handler = Handler(worker.looper)
-    private var gatt: BluetoothGatt? = null
-    private var write: BluetoothGattCharacteristic? = null
+    @Volatile private var gatt: BluetoothGatt? = null
+    @Volatile private var write: BluetoothGattCharacteristic? = null
     private var arrival = 0L
+    private var lastArrival = 0L
     private var scanCallback: ScanCallback? = null
     @Volatile private var stopped = true
     private val parser = WitPacketParser(
@@ -98,8 +97,8 @@ class WitBleSource(
 
     /** Connects to [address] if given, otherwise to the first device whose name starts with "WT". */
     fun start(address: String? = null) {
-        stopped = false
-        if (address != null) { connect(manager.adapter.getRemoteDevice(address)); return }
+        stopped = false; reconnects = 0; longGaps = 0; longestGapMs = 0.0; failedWrites = 0
+        if (address != null) { handler.post { connect(manager.adapter.getRemoteDevice(address)) }; return }
         setStatus("scanning")
         val scanner = manager.adapter.bluetoothLeScanner
         val cb = object : ScanCallback() {
@@ -119,13 +118,14 @@ class WitBleSource(
     fun stop() {
         stopped = true
         handler.removeCallbacksAndMessages(null)
+        handler.post { writes.clear(); writeBusy = false }
         scanCallback?.let { runCatching { manager.adapter.bluetoothLeScanner?.stopScan(it) } }; scanCallback = null
         gatt?.disconnect(); gatt?.close(); gatt = null; write = null
         setStatus("idle")
     }
 
-    /** Re-zero the yaw / angle reference on the sensor (WitMotion "angle reference"). */
-    fun send(cmd: ByteArray) = handler.post { writeNow(cmd) }
+    /** Queue a raw command for the sensor. */
+    fun send(cmd: ByteArray) = handler.post { enqueue(cmd) }
 
     private fun connect(device: BluetoothDevice) {
         deviceName = device.name ?: device.address
@@ -136,17 +136,25 @@ class WitBleSource(
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, st: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                setStatus("connected, setting up (${linkMode.label})")
-                mtu = 23; notifications = 0; framesAtConnect = parser.frames
+                setStatus("connected, setting up")
+                mtu = 23; notifications = 0; framesAtConnect = parser.frames; lastArrival = 0
                 connIntervalMs = -1.0; connLatency = -1; connTimeoutMs = -1
                 synchronized(pings) { pings.clear() }
                 g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-                if (linkMode.phy2m) g.setPreferredPhy(BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_OPTION_NO_PREFERRED)
-                handler.postDelayed({ if (!linkMode.bigMtu || !g.requestMtu(247)) g.discoverServices() }, 200)
+                g.setPreferredPhy(BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_OPTION_NO_PREFERRED)
+                handler.postDelayed({ if (!g.requestMtu(247)) g.discoverServices() }, 200)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                setStatus("disconnected ($st), retrying")
-                g.close(); gatt = null; write = null
-                if (!stopped) handler.postDelayed({ connect(g.device) }, 1000)
+                g.close()
+                handler.post {
+                    // Drop every timer and queued write of the old connection, or they pile up on each reconnect.
+                    handler.removeCallbacksAndMessages(null)
+                    writes.clear(); writeBusy = false
+                    if (gatt === g) { gatt = null; write = null }
+                    if (stopped) return@post
+                    reconnects++
+                    setStatus("disconnected ($st), reconnecting")
+                    handler.postDelayed({ if (!stopped && gatt == null) connect(g.device) }, 1000)
+                }
             }
         }
 
@@ -169,38 +177,47 @@ class WitBleSource(
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, st: Int) {
             setStatus("streaming")
-            handler.postDelayed({ writeNow(Wit.readRegister(Wit.REG_RATE)) }, 300)
-            handler.postDelayed({ writeNow(Wit.readRegister(Wit.REG_BANDWIDTH)) }, 600)
-            handler.postDelayed({ configureIfNeeded() }, 1200)
-            handler.postDelayed(batteryPoll, 1500)
-            handler.postDelayed(ping, 2000)
-            // The sensor changes the connection parameters ~4 s after connecting; drain its send
-            // queue once that has happened (see docs/research-journal.md).
-            handler.postDelayed({ flush() }, 7000)
-            // The sensor can ask for its own (slower) connection parameters after connecting; the
-            // first phone test saw a 45 ms interval. Ask again for the fast one once it has settled.
-            for (d in longArrayOf(2500, 6000)) handler.postDelayed({
-                gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-            }, d)
+            handler.post {
+                enqueue(Wit.readRegister(Wit.REG_RATE))
+                enqueue(Wit.readRegister(Wit.REG_BANDWIDTH))
+                enqueue(Wit.readRegister(Wit.REG_BATTERY))
+            }
+            handler.postDelayed({ configureIfNeeded() }, 1000)
+            handler.postDelayed(batteryPoll, 10_000)
+            handler.postDelayed(ping, 3000)
+        }
+
+        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, st: Int) {
+            handler.post {
+                if (st != BluetoothGatt.GATT_SUCCESS) failedWrites++
+                handler.removeCallbacks(writeTimeout)
+                writeBusy = false
+                pump()
+            }
         }
 
         // Android 13+ delivers the value directly; arrival time is taken before anything else.
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
             arrival = System.nanoTime()
+            if (lastArrival != 0L) {
+                val gap = (arrival - lastArrival) / 1e6
+                if (gap > GAP_MS) longGaps++
+                if (gap > longestGapMs) longestGapMs = gap
+            }
+            lastArrival = arrival
             notifications++
             parser.feed(value)
         }
     }
 
     private val batteryPoll = object : Runnable {
-        override fun run() { writeNow(Wit.readRegister(Wit.REG_BATTERY)); handler.postDelayed(this, 10_000) }
+        override fun run() { enqueue(Wit.readRegister(Wit.REG_BATTERY)); handler.postDelayed(this, 10_000) }
     }
 
     private val ping = object : Runnable {
         override fun run() {
-            if (gatt == null) return
-            if (!flushing) { pingSentAt = System.nanoTime(); writeNow(Wit.readRegister(Wit.REG_TEMP)) }
-            handler.postDelayed(this, 2000)
+            enqueue(Wit.readRegister(Wit.REG_TEMP), isPing = true)
+            handler.postDelayed(this, 5000)
         }
     }
 
@@ -225,40 +242,46 @@ class WitBleSource(
         val wantBw = Wit.BANDWIDTH_CODES.getValue(bandwidthHz)
         if (rateRegister == wantRate && bandwidthRegister == wantBw) return
         Log.i(TAG, "configuring: rate reg $rateRegister→$wantRate, bandwidth reg $bandwidthRegister→$wantBw")
-        Wit.configure(rateHz, bandwidthHz).forEachIndexed { i, cmd -> handler.postDelayed({ writeNow(cmd) }, 150L * i) }
-        handler.postDelayed({ writeNow(Wit.readRegister(Wit.REG_RATE)) }, 1500)
-        handler.postDelayed({ writeNow(Wit.readRegister(Wit.REG_BANDWIDTH)) }, 1800)
+        Wit.configure(rateHz, bandwidthHz).forEach { enqueue(it, gapMs = 100) }
+        enqueue(Wit.readRegister(Wit.REG_RATE), gapMs = 200)
+        enqueue(Wit.readRegister(Wit.REG_BANDWIDTH))
     }
 
-    /**
-     * Experiment: hypothesis that the sensor keeps a queue of notifications that never drains (it
-     * sends about as fast as it produces). Drop to 1 Hz for [ms] so the link can empty the queue,
-     * then go back to [rateHz]. RAM only: nothing is saved to flash.
-     */
-    fun flush(ms: Long = 2500) = handler.post {
-        if (gatt == null || write == null || flushing) return@post
-        flushing = true; flushes++
-        setStatus("streaming (flushing sensor queue)")
-        Wit.setRateNoSave(1).forEachIndexed { i, c -> handler.postDelayed({ writeNow(c) }, 120L * i) }
+    // ---- write queue (handler thread only) ---------------------------------------------------
+
+    private class Write(val cmd: ByteArray, val gapMs: Long, val isPing: Boolean)
+    private val writes = ArrayDeque<Write>()
+    private var writeBusy = false
+    private val writeTimeout = Runnable { failedWrites++; writeBusy = false; pump() }
+
+    /** [gapMs]: wait this long before sending (the WitMotion SDKs leave ~100 ms between setup commands). */
+    private fun enqueue(cmd: ByteArray, gapMs: Long = 0, isPing: Boolean = false) {
+        writes.addLast(Write(cmd, gapMs, isPing)); pump()
+    }
+
+    private fun pump() {
+        if (writeBusy) return
+        val w = writes.removeFirstOrNull() ?: return
+        writeBusy = true
         handler.postDelayed({
-            Wit.setRateNoSave(rateHz).forEachIndexed { i, c -> handler.postDelayed({ writeNow(c) }, 120L * i) }
-            handler.postDelayed({ flushing = false; setStatus("streaming") }, 400)
-        }, ms)
-    }
-
-    private fun writeNow(cmd: ByteArray) {
-        val g = gatt ?: return
-        val c = write ?: return
-        g.writeCharacteristic(c, cmd, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+            val g = gatt; val c = write
+            if (g == null || c == null) { writeBusy = false; writes.clear(); return@postDelayed }
+            if (w.isPing) pingSentAt = System.nanoTime()
+            val rc = g.writeCharacteristic(c, w.cmd, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+            if (rc != BluetoothStatusCodes.SUCCESS) {
+                failedWrites++; writeBusy = false
+                handler.postDelayed({ pump() }, 50)
+            } else {
+                handler.postDelayed(writeTimeout, 1000)
+            }
+        }, w.gapMs)
     }
 
     private fun setStatus(s: String) { status = s; Log.i(TAG, s); onStatus?.invoke(s) }
 
-    private companion object { const val TAG = "WitBle" }
-}
-
-enum class LinkMode(val label: String, val bigMtu: Boolean, val phy2m: Boolean) {
-    DEFAULT_MTU("MTU 23, 1M PHY", false, false),
-    DEFAULT_MTU_2M("MTU 23, 2M PHY", false, true),
-    BIG_MTU("MTU 247, 2M PHY", true, true),
+    private companion object {
+        const val TAG = "WitBle"
+        /** Notifications normally arrive every ~44 ms; a gap over this counts as a stall. */
+        const val GAP_MS = 250.0
+    }
 }
