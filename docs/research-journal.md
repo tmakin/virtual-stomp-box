@@ -135,9 +135,48 @@ impact in sensor data: first jolt at 421 ms, max 2.54 g
     latency, supervision timeout, via the hidden `onConnectionUpdated` callback), and **frames
     per notification**.
 
+## 2026-11-24: Latency test 6 (200 Hz, flush experiment, build #9 `54ee068`)
+
+Automatic flush 7 s after connecting:
+
+```
+BLE: interval 15.00 ms, peripheral latency 1, timeout 5000 ms, 7.99 frames/notification, flushes 1
+rate 199.2 Hz, 9.13 frames/event, interval median 43.55 ms p95 80.01, lag median 35.6 p95 76.5 max 99.4 ms
+latency: median of 10: detect 421 ms · output 100 ms · total 521 ms
+impact in sensor data: first jolt at 384 ms, max 1.25 g
+```
+
+After a second, manual flush:
+
+```
+BLE: interval 15.00 ms, peripheral latency 1, timeout 5000 ms, 7.98 frames/notification, flushes 2
+latency: median of 9: detect 432 ms · output 100 ms · total 530 ms
+impact in sensor data: first jolt at 420 ms, max 1.09 g
+```
+
+- **Hypothesis D rejected, in its drainable form.** Two flushes (2.5 s at 1 Hz each) left
+  *detect* at 420–430 ms. A queue that the link could empty would have emptied.
+- **The connection parameters aren't the problem.** The stack reports a **15 ms interval with
+  peripheral latency 1**, so this phone and this sensor *did* get the fast interval, unlike the
+  WT9011DCL report (30 ms, latency 10). Even so, notifications arrive only every **~44 ms, 8 frames
+  each**: the sensor packs frames on its own ~40 ms timer, whatever the link allows. That timer
+  explains ~20–40 ms of delay and jitter, not 420 ms.
+- **Ruled out so far:** the phone (the impact is in the data when it arrives), the link
+  (all frames arrive, 15 ms interval), the detector (first jolt ≈ detect), the sample rate (same
+  delay at 200 / 100 / 50 Hz) and a drainable queue. **What's left is inside the sensor:** a
+  structural delay (a fixed-depth delay line in the send path, or processing before output).
+- **Next test: register-read round trip ("ping").** A register read is answered on the same
+  notify path as the data. Every 2 s the app reads register 0x40 and times write → `55 71` reply.
+  - Round trip ≈ 420 ms or more: the delay is in the **send path** (a fixed-depth buffer).
+    Then, at 10 Hz (now in the rate cycler), the round trip shows whether the depth is counted
+    in notifications (it would grow to seconds) or in time (it would stay ~420 ms).
+  - Round trip ≈ 50–100 ms: the send path is fast and the **data itself is old** when it's
+    queued (sampling or filtering in the firmware). That would point at the sensor's settings
+    (bandwidth / output mode) or at a different sensor.
+
 ## Open questions
 
-- Does the flush remove the ~420 ms (hypothesis D)? If it does, does the delay come back, and when?
+- Is the register-read round trip ~420 ms (send path) or short (old data)?
 - If it doesn't: the delay is inside the sensor firmware. Check WitMotion's own app for the
   same lag (tap the sensor and watch the graph). Ask WitMotion support, or consider another sensor.
 - Make sure the WitMotion app (or anything else) isn't also connected: the manual warns of lag

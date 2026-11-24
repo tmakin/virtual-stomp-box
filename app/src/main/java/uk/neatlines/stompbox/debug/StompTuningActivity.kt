@@ -183,6 +183,7 @@ class StompTuningActivity : Activity() {
                 if (src.connLatency < 0) "?" else "${src.connLatency}",
                 if (src.connTimeoutMs < 0) "?" else "${src.connTimeoutMs} ms",
                 src.framesPerNotification, src.flushes))
+            append("\nping (register read round trip): ${src.pingSummary}")
             append("\n").append(link.format())
             if (src.status == "streaming" && link.samples > 400 && link.sampleRateHz < 0.9 * engine.rateHz) {
                 append("\n⚠ receiving %.0f of %d frames/s: the link isn't keeping up, so frames queue in the sensor and add delay. Try a lower sensor rate."

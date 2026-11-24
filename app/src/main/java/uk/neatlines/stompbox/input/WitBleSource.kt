@@ -58,6 +58,19 @@ class WitBleSource(
     /** True while [flush] has the sensor at 1 Hz; samples then are not real-time and should be ignored. */
     @Volatile var flushing = false; private set
     @Volatile var flushes = 0; private set
+    /**
+     * Round trip of a register read (write `FF AA 27 40` → `55 71` reply), timed every 2 s. The
+     * reply comes back on the same notify path as the data, so if the ~420 ms data delay is a send
+     * queue in the sensor, the round trip includes it; if the round trip is short, the delay is in
+     * the sensor's sampling or filtering instead.
+     */
+    val pingSummary: String get() {
+        val v = synchronized(pings) { pings.sorted() }
+        if (v.isEmpty()) return "no replies yet"
+        return "median %.0f ms, min %.0f, max %.0f (n=%d)".format(v[v.size / 2], v.first(), v.last(), v.size)
+    }
+    private val pings = ArrayDeque<Double>()
+    @Volatile private var pingSentAt = 0L
     val framesPerNotification: Double get() = if (notifications == 0L) 0.0 else parser.frames.toDouble() / notifications
     var onStatus: ((String) -> Unit)? = null
 
@@ -148,6 +161,7 @@ class WitBleSource(
             handler.postDelayed({ writeNow(Wit.readRegister(Wit.REG_BANDWIDTH)) }, 600)
             handler.postDelayed({ configureIfNeeded() }, 1200)
             handler.postDelayed(batteryPoll, 1500)
+            handler.postDelayed(ping, 2000)
             // The sensor changes the connection parameters ~4 s after connecting; drain its send
             // queue once that has happened (see docs/research-journal.md).
             handler.postDelayed({ flush() }, 7000)
@@ -170,8 +184,23 @@ class WitBleSource(
         override fun run() { writeNow(Wit.readRegister(Wit.REG_BATTERY)); handler.postDelayed(this, 10_000) }
     }
 
+    private val ping = object : Runnable {
+        override fun run() {
+            if (gatt == null) return
+            if (!flushing) { pingSentAt = System.nanoTime(); writeNow(Wit.readRegister(Wit.REG_TEMP)) }
+            handler.postDelayed(this, 2000)
+        }
+    }
+
     private fun onRegisters(reg: Int, v: ShortArray) {
         when (reg) {
+            Wit.REG_TEMP -> {
+                val sent = pingSentAt
+                if (sent != 0L) {
+                    pingSentAt = 0L
+                    synchronized(pings) { pings.addLast((arrival - sent) / 1e6); while (pings.size > 30) pings.removeFirst() }
+                }
+            }
             Wit.REG_RATE -> rateRegister = v[0].toInt()
             Wit.REG_BANDWIDTH -> bandwidthRegister = v[0].toInt()
             Wit.REG_BATTERY -> batteryVolts = v[0] / 100.0

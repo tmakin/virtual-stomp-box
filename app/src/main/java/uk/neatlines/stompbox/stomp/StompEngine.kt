@@ -227,5 +227,5 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         Placement(v(p[0]), AngleConvention(c[0], c[1]), p[2].toDouble(), p[3].takeIf { it.isNotEmpty() }?.let(::v))
     }.getOrDefault(Placement.DEFAULT)
 
-    companion object { val RATES = listOf(200, 100, 50) }
+    companion object { val RATES = listOf(200, 100, 50, 10) }
 }
