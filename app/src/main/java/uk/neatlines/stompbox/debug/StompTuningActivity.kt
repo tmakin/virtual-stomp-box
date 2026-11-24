@@ -114,6 +114,7 @@ class StompTuningActivity : Activity() {
             button("Share last recording") { lastFile?.let(::share) ?: toast("Record something first") },
             button("Copy status") { copyStatus() },
         ))
+        col.addView(button("Flush sensor queue (experiment)") { engine.source.flush() })
         saved = TextView(this).apply { textSize = 12f; setTextIsSelectable(true) }
         col.addView(saved)
 
@@ -176,6 +177,11 @@ class StompTuningActivity : Activity() {
             append("${src.deviceName ?: "-"}: ${src.status}")
             if (!src.batteryVolts.isNaN()) append("  battery %.2f V".format(src.batteryVolts))
             append("\nsensor set to ${engine.rateHz} Hz (rate reg ${src.rateRegister}, bandwidth reg ${src.bandwidthRegister})")
+            append("\nBLE: interval %s, peripheral latency %s, timeout %s, %.2f frames/notification, flushes %d".format(
+                if (src.connIntervalMs < 0) "?" else "%.2f ms".format(src.connIntervalMs),
+                if (src.connLatency < 0) "?" else "${src.connLatency}",
+                if (src.connTimeoutMs < 0) "?" else "${src.connTimeoutMs} ms",
+                src.framesPerNotification, src.flushes))
             append("\n").append(link.format())
             if (src.status == "streaming" && link.samples > 400 && link.sampleRateHz < 0.9 * engine.rateHz) {
                 append("\n⚠ receiving %.0f of %d frames/s: the link isn't keeping up, so frames queue in the sensor and add delay. Try a lower sensor rate."

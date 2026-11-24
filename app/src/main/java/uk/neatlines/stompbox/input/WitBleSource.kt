@@ -50,6 +50,15 @@ class WitBleSource(
     @Volatile var rateRegister: Int = -1; private set
     @Volatile var bandwidthRegister: Int = -1; private set
     @Volatile var deviceName: String? = null; private set
+    /** Connection parameters as last reported by the stack (hidden callback; -1 until reported). */
+    @Volatile var connIntervalMs: Double = -1.0; private set
+    @Volatile var connLatency: Int = -1; private set
+    @Volatile var connTimeoutMs: Int = -1; private set
+    @Volatile var notifications = 0L; private set
+    /** True while [flush] has the sensor at 1 Hz; samples then are not real-time and should be ignored. */
+    @Volatile var flushing = false; private set
+    @Volatile var flushes = 0; private set
+    val framesPerNotification: Double get() = if (notifications == 0L) 0.0 else parser.frames.toDouble() / notifications
     var onStatus: ((String) -> Unit)? = null
 
     private val manager = context.getSystemService(BluetoothManager::class.java)
@@ -116,6 +125,13 @@ class WitBleSource(
             }
         }
 
+        // Hidden in the SDK (@hide) but called by the stack; the same trick Nordic's BLE library uses.
+        @Suppress("unused")
+        fun onConnectionUpdated(g: BluetoothGatt, interval: Int, latency: Int, timeout: Int, st: Int) {
+            connIntervalMs = interval * 1.25; connLatency = latency; connTimeoutMs = timeout * 10
+            Log.i(TAG, "connection updated: interval ${interval * 1.25} ms, peripheral latency $latency, timeout ${timeout * 10} ms, status $st")
+        }
+
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, st: Int) { g.discoverServices() }
 
         override fun onServicesDiscovered(g: BluetoothGatt, st: Int) {
@@ -132,6 +148,9 @@ class WitBleSource(
             handler.postDelayed({ writeNow(Wit.readRegister(Wit.REG_BANDWIDTH)) }, 600)
             handler.postDelayed({ configureIfNeeded() }, 1200)
             handler.postDelayed(batteryPoll, 1500)
+            // The sensor changes the connection parameters ~4 s after connecting; drain its send
+            // queue once that has happened (see docs/research-journal.md).
+            handler.postDelayed({ flush() }, 7000)
             // The sensor can ask for its own (slower) connection parameters after connecting; the
             // first phone test saw a 45 ms interval. Ask again for the fast one once it has settled.
             for (d in longArrayOf(2500, 6000)) handler.postDelayed({
@@ -142,6 +161,7 @@ class WitBleSource(
         // Android 13+ delivers the value directly; arrival time is taken before anything else.
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
             arrival = System.nanoTime()
+            notifications++
             parser.feed(value)
         }
     }
@@ -167,6 +187,22 @@ class WitBleSource(
         Wit.configure(rateHz, bandwidthHz).forEachIndexed { i, cmd -> handler.postDelayed({ writeNow(cmd) }, 150L * i) }
         handler.postDelayed({ writeNow(Wit.readRegister(Wit.REG_RATE)) }, 1500)
         handler.postDelayed({ writeNow(Wit.readRegister(Wit.REG_BANDWIDTH)) }, 1800)
+    }
+
+    /**
+     * Experiment: hypothesis that the sensor keeps a queue of notifications that never drains (it
+     * sends about as fast as it produces). Drop to 1 Hz for [ms] so the link can empty the queue,
+     * then go back to [rateHz]. RAM only: nothing is saved to flash.
+     */
+    fun flush(ms: Long = 2500) = handler.post {
+        if (gatt == null || write == null || flushing) return@post
+        flushing = true; flushes++
+        setStatus("streaming (flushing sensor queue)")
+        Wit.setRateNoSave(1).forEachIndexed { i, c -> handler.postDelayed({ writeNow(c) }, 120L * i) }
+        handler.postDelayed({
+            Wit.setRateNoSave(rateHz).forEachIndexed { i, c -> handler.postDelayed({ writeNow(c) }, 120L * i) }
+            handler.postDelayed({ flushing = false; setStatus("streaming") }, 400)
+        }, ms)
     }
 
     private fun writeNow(cmd: ByteArray) {

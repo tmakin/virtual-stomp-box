@@ -67,6 +67,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
             latency.sample(arrivalNanos, kotlin.math.sqrt((dx * dx + dy * dy + dz * dz).toDouble()))
         }
         lastSample = s
+        if (source.flushing) return
         recorder?.sample(arrivalNanos, s)
         calibration?.add(s)
         pipeline.onSample(s, arrivalNanos)

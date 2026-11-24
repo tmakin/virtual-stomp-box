@@ -99,8 +99,48 @@ latency: median of 9: detect 469 ms · output 100 ms · total 570 ms
 - **Also asked for:** a "stomp and hold" test (does the drum sound only on lift?), and a mic
   recording for desktop replay.
 
+## 2026-11-24: Latency test 5 (200 Hz, first-jolt figure)
+
+```
+rate 199.2 Hz, 8.70 frames/event, interval median 43.36 ms p95 78.04, lag median 38.3 p95 78.9 max 93.2 ms
+audio: buffer 10.0 ms, output latency 79 ms, fast path yes
+latency: median of 9: detect 427 ms · output 101 ms · total 529 ms
+impact in sensor data: first jolt at 421 ms, max 2.54 g
+```
+
+- **Hypothesis B rejected.** The first jolt over 0.5 g arrives at 421 ms, against detect at
+  427 ms, and it's a sharp 2.5 g change. Lifting the foot wouldn't produce that. The impact *is*
+  in the data, and the detector catches it within about one burst. **The data reaches the phone
+  about 420 ms after the impact.** The delay is upstream of the GATT callback.
+- **What other people have found** (web search):
+  - [ehartmann/witmotion-ble](https://github.com/ehartmann/witmotion-ble) (WT9011DCL): about 4 s
+    after connecting, the sensor sets the **connection interval to 30 ms with peripheral latency
+    10**, overriding `CONNECTION_PRIORITY_HIGH`. From 50 Hz up, it **packs** the frames sampled
+    meanwhile into one notification about every 40 ms (2 frames at 50 Hz, 4 at 100 Hz). No
+    latency figures published.
+  - The WT901BLECL manual warns of "data lag" when several connections are open (up to 4 are allowed).
+- **Hypothesis D: a notification queue in the sensor.** Notifications are produced about every
+  40 ms *whatever the rate* (packing), so a queue counted in notifications gives a delay that is
+  constant *in time*: about 10 × 42 ms ≈ 420 ms. That matches tests 1–5 at all three rates. The
+  queue would fill during connection setup and never drain, because about one notification goes
+  out per connection event, the same rate they're produced. Peripheral latency 10 may be related.
+  - Prediction: drop the rate to 1 Hz for a couple of seconds (production far below link
+    capacity), and the queue empties; back at 200 Hz, the delay should be close to the link delay
+    (about 40–80 ms) unless something refills it.
+- **Changes (this commit):**
+  - **Flush:** set the rate to 1 Hz without saving, wait 2.5 s, then set the configured rate
+    again. This runs automatically 7 s after connecting, and there's a button for it. Samples
+    during the flush are ignored.
+  - The status shows the **connection parameters the stack reports** (interval, peripheral
+    latency, supervision timeout, via the hidden `onConnectionUpdated` callback), and **frames
+    per notification**.
+
 ## Open questions
 
-- B or C? Waiting on the first-jolt figure and the stomp-and-hold test.
-- Can the sensor's connection interval be changed? Possibly through WitMotion's own tools or settings.
-- Audio output: measure wired/USB-C output; consider AAudio/Oboe.
+- Does the flush remove the ~420 ms (hypothesis D)? If it does, does the delay come back, and when?
+- If it doesn't: the delay is inside the sensor firmware. Check WitMotion's own app for the
+  same lag (tap the sensor and watch the graph). Ask WitMotion support, or consider another sensor.
+- Make sure the WitMotion app (or anything else) isn't also connected: the manual warns of lag
+  with several connections.
+- Audio output: about 100 ms on the Pixel 8a speaker even with the fast path granted. Measure
+  wired/USB-C output; consider AAudio/Oboe.
