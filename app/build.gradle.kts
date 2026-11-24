@@ -1,3 +1,7 @@
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -16,8 +20,8 @@ android {
         versionName = "0.1.$versionCode"
         // Shown in the app's status line, so a test result can be matched to its build.
         val sha = (System.getenv("GITHUB_SHA") ?: "local").take(7)
-        val built = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
-            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'"))
+        val built = ZonedDateTime.now(ZoneOffset.UTC)
+            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'"))
         buildConfigField("String", "BUILD_LABEL", "\"#$versionCode $sha $built\"")
     }
 
