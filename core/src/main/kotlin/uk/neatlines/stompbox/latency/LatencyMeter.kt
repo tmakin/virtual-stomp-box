@@ -22,8 +22,19 @@ class LatencyMeter(
     private val settleNanos: Long = 1_200_000_000L,
     private val keep: Int = 30,
     private val clusterNanos: Long = 80_000_000L,
+    private val joltG: Double = 0.5,
+    private val joltWindowNanos: Long = 150_000_000L,
 ) {
-    data class Measurement(val detectMs: Double, val outputMs: Double?, val totalMs: Double?)
+    /**
+     * [firstJoltMs]: when the first sensor sample with a jolt over [joltG] arrived, after the
+     * impact. Far below [detectMs] means the impact *is* in the data and the detector fired on
+     * something later (the foot lifting). Close to it means the data itself arrives late.
+     * [maxJoltG]: the biggest jolt in the [joltWindowNanos] after that first one.
+     */
+    data class Measurement(
+        val detectMs: Double, val outputMs: Double?, val totalMs: Double?,
+        val firstJoltMs: Double? = null, val maxJoltG: Double? = null,
+    )
 
     private class Stomp(val detectedNanos: Long, val playNanos: Long)
 
@@ -31,6 +42,12 @@ class LatencyMeter(
     private val stomps = ArrayList<Stomp>()
     private val results = ArrayDeque<Measurement>()
     var unpaired = 0; private set
+
+    private val sampleTimes = ArrayList<Long>()
+    private val sampleJolts = ArrayList<Double>()
+
+    /** Every sensor sample: arrival time and jolt (size of the change in acceleration, g). */
+    @Synchronized fun sample(arrivalNanos: Long, joltG: Double) { sampleTimes += arrivalNanos; sampleJolts += joltG }
 
     @Synchronized fun onset(nanos: Long) { onsets += nanos; onsets.sort() }
 
@@ -48,19 +65,29 @@ class LatencyMeter(
             val impact = onsets.getOrNull(i)
             val drum = onsets.firstOrNull { it >= s.playNanos && it - s.playNanos <= searchNanos }
             if (impact == null) { unpaired++; continue }
+            val first = sampleTimes.indices.firstOrNull { sampleTimes[it] >= impact && sampleJolts[it] >= joltG }
+            val maxJolt = first?.let { f ->
+                sampleTimes.indices.filter { sampleTimes[it] >= sampleTimes[f] && sampleTimes[it] - sampleTimes[f] <= joltWindowNanos }
+                    .maxOf { sampleJolts[it] }
+            }
             results.addLast(Measurement(
                 detectMs = (s.detectedNanos - impact) / 1e6,
                 outputMs = drum?.let { (it - s.playNanos) / 1e6 },
                 totalMs = drum?.let { (it - impact) / 1e6 },
+                firstJoltMs = first?.let { (sampleTimes[it] - impact) / 1e6 },
+                maxJoltG = maxJolt,
             ))
             while (results.size > keep) results.removeFirst()
         }
         val oldest = stomps.minOfOrNull { it.detectedNanos } ?: nowNanos
         onsets.removeAll { oldest - it > 2 * searchNanos && nowNanos - it > 2 * searchNanos }
+        val drop = sampleTimes.indexOfFirst { oldest - it <= 2 * searchNanos || nowNanos - it <= 2 * searchNanos }
+            .let { if (it < 0) sampleTimes.size else it }
+        if (drop > 0) { sampleTimes.subList(0, drop).clear(); sampleJolts.subList(0, drop).clear() }
         return results.toList()
     }
 
-    @Synchronized fun clear() { onsets.clear(); stomps.clear(); results.clear(); unpaired = 0 }
+    @Synchronized fun clear() { sampleTimes.clear(); sampleJolts.clear(); onsets.clear(); stomps.clear(); results.clear(); unpaired = 0 }
 
     companion object {
         /** "detect 380 ms · output 32 ms · total 412 ms (median of 12)". */
@@ -72,8 +99,11 @@ class LatencyMeter(
             val t = med(r.mapNotNull { it.totalMs })
             fun f(v: Double?) = v?.let { "%.0f ms".format(java.util.Locale.US, it) } ?: "—"
             val last = r.last()
+            val j = med(r.mapNotNull { it.firstJoltMs })
+            val g = med(r.mapNotNull { it.maxJoltG })
             return "median of ${r.size}: detect ${f(d)} · output ${f(o)} · total ${f(t)}\n" +
-                "last: detect ${f(last.detectMs)} · output ${f(last.outputMs)} · total ${f(last.totalMs)}"
+                "last: detect ${f(last.detectMs)} · output ${f(last.outputMs)} · total ${f(last.totalMs)}\n" +
+                "impact in sensor data: first jolt at ${f(j)}, max %s".format(g?.let { "%.2f g".format(java.util.Locale.US, it) } ?: "—")
         }
     }
 }

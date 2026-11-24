@@ -61,6 +61,11 @@ class StompEngine(private val context: Context, private val output: StompOutput)
     // ---- the latency path -------------------------------------------------------------------
 
     private fun onSample(s: WitSample, arrivalNanos: Long) {
+        val p = lastSample
+        if (latencyProbe != null && p != null) {
+            val dx = s.ax - p.ax; val dy = s.ay - p.ay; val dz = s.az - p.az
+            latency.sample(arrivalNanos, kotlin.math.sqrt((dx * dx + dy * dy + dz * dz).toDouble()))
+        }
         lastSample = s
         recorder?.sample(arrivalNanos, s)
         calibration?.add(s)

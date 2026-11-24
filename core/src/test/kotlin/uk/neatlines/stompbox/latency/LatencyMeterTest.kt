@@ -52,4 +52,16 @@ class LatencyMeterTest {
         assertEquals(100.0, r.detectMs, 0.01)
         assertEquals(130.0, r.totalMs!!, 0.01)
     }
+
+    @Test fun findsFirstJoltAfterImpact() {
+        val m = LatencyMeter()
+        m.onset(1000 * ms)
+        // Quiet samples every 5 ms, a 2 g jolt arriving 60 ms after the impact, the trigger at +450 ms.
+        for (k in 0 until 200) { val t = 900 * ms + k * 5 * ms; m.sample(t, if (t == 1060 * ms) 2.0 else 0.05) }
+        m.stomp(1450 * ms, 1450 * ms)
+        val r = m.poll(5000 * ms).single()
+        assertEquals(60.0, r.firstJoltMs!!, 0.01)
+        assertEquals(2.0, r.maxJoltG!!, 0.01)
+        assertEquals(450.0, r.detectMs, 0.01)
+    }
 }
