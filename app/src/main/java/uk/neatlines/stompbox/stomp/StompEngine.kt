@@ -32,7 +32,7 @@ fun interface StompOutput {
 class StompEngine(private val context: Context, private val output: StompOutput) {
     private val prefs = context.getSharedPreferences("stomp", Context.MODE_PRIVATE)
 
-    val pipeline = StompPipeline(loadConfig(loadMode()), loadPlacement(), prefs.getInt("rateHz", 200)) { e, at -> onStomp(e, at) }
+    val pipeline = StompPipeline(loadConfig(loadMode()), loadPlacement(), prefs.getInt("rateHz", 200).takeIf { it in RATES } ?: 200) { e, at -> onStomp(e, at) }
     val source = WitBleSource(context, pipeline.rateHz, onSample = ::onSample)
 
     /** Sensor output rate, Hz (50, 100 or 200). Lower it if the link can't carry every frame. */

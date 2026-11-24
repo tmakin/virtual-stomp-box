@@ -88,7 +88,12 @@ data class StompConfig(
     }
 
     companion object {
-        /** Starting points. Both are guesses until tuned on real recordings. */
+        /**
+         * Starting points, chosen for the lowest latency: VERTICAL feature, IMMEDIATE timing (play
+         * on arrival, no steady delay), no peak wait, no gyro gate. The app also uses 200 Hz, the
+         * 2M PHY, a 247-byte MTU and CONNECTION_PRIORITY_HIGH. Measured: 86 ms impact → detected.
+         * LEG uses JERK because the shin sees a weaker, less vertical impact.
+         */
         val SHOE = StompConfig()
         val LEG = StompConfig(
             mode = Mode.LEG, feature = Feature.JERK, minThresholdG = 0.8, noiseFactor = 5.0,
