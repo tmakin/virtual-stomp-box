@@ -28,6 +28,8 @@ To get data off the phone, use **Tune & debug**:
 - **[docs/wt901-design.md](docs/wt901-design.md)**: the design. It covers how orientation and
   acceleration are used, the shoe and leg modes, calibration, the latency/jitter trade-off,
   and debugging and tuning.
+- **[docs/research-journal.md](docs/research-journal.md)**: log of hardware tests, results and
+  what changed because of them.
 - **[app](app)**: the Android app.
   - The home screen shows and plays each stomp.
   - The **Tune & debug** screen has a live plot, sliders, calibration, and recording with sharing.
