@@ -31,7 +31,9 @@ import java.util.Collections
  * Cross-check a few taps against 240 fps slow-motion video (step 4): a constant offset between
  * the two methods points at a timestamp error, not link latency.
  */
-class LatencyProbe(private val sampleRate: Int = 48_000) {
+class LatencyProbe(private val sampleRate: Int = 48_000, private val refractoryMs: Float = 150f) {
+    /** Called on the probe thread with each onset time (System.nanoTime). */
+    @Volatile var onOnset: ((Long) -> Unit)? = null
     private val onsets = Collections.synchronizedList(ArrayList<Long>())
     private val events = Collections.synchronizedList(ArrayList<Long>())
     @Volatile private var running = false
@@ -85,7 +87,7 @@ class LatencyProbe(private val sampleRate: Int = 48_000) {
 
     private fun loop(rec: AudioRecord) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
-        val detector = OnsetDetector(sampleRate)
+        val detector = OnsetDetector(sampleRate, refractoryMs = refractoryMs)
         val buf = FloatArray(sampleRate / 100)       // 10 ms reads
         val ts = AudioTimestamp()
         var frame = 0L
@@ -101,6 +103,7 @@ class LatencyProbe(private val sampleRate: Int = 48_000) {
                     val t = if (haveTs) ts.nanoTime + (f - ts.framePosition) * 1_000_000_000L / sampleRate
                     else System.nanoTime() - (first + n - f) * 1_000_000_000L / sampleRate
                     onsets += t
+                    onOnset?.invoke(t)
                 }
                 frame += n
             }

@@ -146,16 +146,22 @@ mode keeps its own tuning.
   - the measured link: sample rate, frames per connection event, the connection interval (gap
     between bursts) and the arrival lag;
   - calibration quality.
-- **Live plot of the last 4 s:**
-  - the feature (white) and the threshold (red dashed);
-  - the tilt (cyan);
-  - a dot on each stomp, coloured by zone.
-- **Last stomp:** zone, velocity, peak, tilt and link lag.
-- **Toggles:** mode, feature, and timing (IMMEDIATE / STEADY). STEADY also shows a count of frames
-  that arrived too late for the delay; raise "Steady delay" if it climbs.
+  - a warning when fewer frames arrive than the sensor is set to send (frames queuing in the sensor).
+- **Latency test:** listens with the mic and splits each stomp's delay into detect (impact →
+  detected), output (play → drum heard) and total (impact → drum heard). See "Latency" below.
+- **Live plot of the last 4 s:** the feature (white), the threshold (red dashed) and a dot on each stomp.
+- **Last stomp:** velocity and peak.
+- **Toggles:** mode, feature, timing (IMMEDIATE / STEADY) and sensor rate (200 / 100 / 50 Hz).
+  STEADY also shows a count of frames that arrived too late for the delay; raise "Steady delay" if
+  it climbs.
+- **Heel/toe zones are off** for the first iteration: one stomp, one sound. The code is still in
+  the detector (`zonesEnabled`), with no UI.
 - **Sliders** for every setting. Changes apply immediately and are saved for the current mode.
-- **Record:** writes `stomp-YYYYMMDD-HHMMSS.csv` and opens the share sheet when stopped. Tick
-  "with mic" to also record impact sounds through `LatencyProbe`, which gives latency figures.
+- **Record:** writes `stomp-YYYYMMDD-HHMMSS.csv`. On stop it copies the file to
+  `Download/StompBox/` on the phone and opens the share sheet. Tick "with mic" to also record impact
+  sounds, which gives latency figures in the replay tool.
+- **Copy status:** copies the status, latency summary and config to the clipboard, to paste into a
+  message.
 - **Without the UI:** run `adb logcat -s Stomp` for one line per stomp.
 
 ### On the laptop: replay
@@ -209,17 +215,32 @@ how to install it from the CI release.
 - `StompApp` owns the `StompEngine` and a `DrumSynth`: kick on note 36, snare on 38, click for
   anything else. Each synth voice is generated in code and played on a low-latency `AudioTrack`
   with a two-burst buffer. The home screen shows the reported buffer size in ms.
-- The home screen has Connect, a large flash per stomp coloured by zone with the velocity, Mute,
-  and **Tune & debug**.
+- The home screen has Connect, a large flash per stomp with the velocity, Sound on/off, and
+  **Tune & debug**. Both screens pad for the system bars (Android 15 draws edge to edge).
 - The engine plays IMMEDIATE stomps on the GATT thread. STEADY stomps go through a high-priority
   scheduler thread that wakes at the target time. That is usually well under 1 ms off target,
   but it hasn't been measured. The synth starts a voice at its next burst, which adds up to one
   burst (about 2–4 ms) of jitter. Starting voices at a given frame inside the synth would remove
   that.
 - Settings, calibration and the mode are kept in SharedPreferences. Recordings are saved to
-  `Android/data/uk.neatlines.stompbox/files/stomp-logs/` and shared through a `FileProvider`.
+  `Android/data/uk.neatlines.stompbox/files/stomp-logs/`, copied to `Download/StompBox/` and shared
+  through a `FileProvider`.
 - Builds are signed with `app/debug.keystore`, which is committed so every CI build installs over
   the previous one. It's for test builds only.
+
+## Latency
+
+The first phone test heard about 400 ms from stomp to sound, which is far above the ~15–30 ms
+budget worked out above. The latency test splits it:
+
+| Part | Expected | If it is large |
+|---|---|---|
+| detect: impact → detected | 10–25 ms | The sensor sends more frames than the link carries, so they queue in its UART-to-BLE buffer (the status line warns when the received rate is below the set rate). Lower the sensor rate. Also check the connection interval in the status line: the sensor may have negotiated a long one. |
+| output: play → heard | 20–40 ms on a Pixel speaker | Bluetooth headphones or speakers add 150–300 ms. Use the phone speaker or a wired output. |
+| total | sum of the two | Total is exact (both ends are mic times). Detect and output each carry the mic's own input delay, with opposite signs. |
+
+Other levers once the large term is gone: STEADY → IMMEDIATE timing; peak wait 0; Feature
+JERK reacts a sample earlier than VERTICAL; 2M PHY / connection priority (already requested).
 
 ## Risks and open questions
 

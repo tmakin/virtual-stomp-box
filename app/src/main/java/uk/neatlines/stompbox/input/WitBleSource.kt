@@ -37,11 +37,14 @@ import uk.neatlines.stompbox.wit.WitSample
 @SuppressLint("MissingPermission")
 class WitBleSource(
     private val context: Context,
-    private val rateHz: Int = 200,
+    rateHz: Int = 200,
     private val bandwidthHz: Int = 188,
     /** Called on the GATT binder thread. Keep it short: it is on the latency path. */
     private val onSample: (WitSample, arrivalNanos: Long) -> Unit,
 ) {
+    /** Output rate to set on the sensor. Changing it while connected reconfigures the sensor. */
+    @Volatile var rateHz: Int = rateHz
+        set(v) { require(v in Wit.RATE_CODES); field = v; handler.post { configureIfNeeded() } }
     @Volatile var status: String = "idle"; private set
     @Volatile var batteryVolts: Double = Double.NaN; private set
     @Volatile var rateRegister: Int = -1; private set
@@ -151,6 +154,7 @@ class WitBleSource(
     }
 
     private fun configureIfNeeded() {
+        if (gatt == null || write == null) return
         val wantRate = Wit.RATE_CODES.getValue(rateHz)
         val wantBw = Wit.BANDWIDTH_CODES.getValue(bandwidthHz)
         if (rateRegister == wantRate && bandwidthRegister == wantBw) return

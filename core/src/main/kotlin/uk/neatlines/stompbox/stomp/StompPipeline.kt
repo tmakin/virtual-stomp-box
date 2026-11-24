@@ -31,9 +31,18 @@ class StompPipeline(
         get() = detector.placement
         set(v) { detector.placement = v }
 
+    /**
+     * Nominal sensor rate. Set it (from any thread) when the sensor is reconfigured; the clock
+     * starts again on the next sample, on the sample thread.
+     */
+    @Volatile var rateHz: Int = rateHz
+    private var appliedRate = rateHz
+
     /** Call for every parsed sample with System.nanoTime() taken when its notification arrived. */
     fun onSample(s: WitSample, arrivalNanos: Long) {
         now = arrivalNanos
+        val r = rateHz
+        if (r != appliedRate) { appliedRate = r; clock.reset(r.toDouble()); detector.sampleRateHz = r.toDouble() }
         val t = clock.onSample(arrivalNanos)
         link.add(arrivalNanos, clock.lastLagNanos)
         detector.onSample(s, t, arrivalNanos)

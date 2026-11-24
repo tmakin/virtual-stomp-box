@@ -7,6 +7,7 @@ import android.util.Log
 import uk.neatlines.stompbox.debug.LinkStats
 import uk.neatlines.stompbox.debug.StompLogWriter
 import uk.neatlines.stompbox.input.WitBleSource
+import uk.neatlines.stompbox.latency.LatencyMeter
 import uk.neatlines.stompbox.latency.LatencyProbe
 import uk.neatlines.stompbox.wit.WitSample
 import java.io.File
@@ -31,8 +32,13 @@ fun interface StompOutput {
 class StompEngine(private val context: Context, private val output: StompOutput) {
     private val prefs = context.getSharedPreferences("stomp", Context.MODE_PRIVATE)
 
-    val pipeline = StompPipeline(loadConfig(loadMode()), loadPlacement(), RATE_HZ) { e, at -> onStomp(e, at) }
-    val source = WitBleSource(context, RATE_HZ, onSample = ::onSample)
+    val pipeline = StompPipeline(loadConfig(loadMode()), loadPlacement(), prefs.getInt("rateHz", 200)) { e, at -> onStomp(e, at) }
+    val source = WitBleSource(context, pipeline.rateHz, onSample = ::onSample)
+
+    /** Sensor output rate, Hz (50, 100 or 200). Lower it if the link can't carry every frame. */
+    var rateHz: Int
+        get() = pipeline.rateHz
+        set(v) { prefs.edit().putInt("rateHz", v).apply(); source.rateHz = v; pipeline.rateHz = v }
 
     /** Latest stomps for the UI, newest last. */
     val recentStomps = ArrayDeque<StompEvent>()
@@ -49,7 +55,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         set(m) { prefs.edit().putString("mode", m.name).apply(); pipeline.config = loadConfig(m) }
 
     fun start(address: String? = null) = source.start(address)
-    fun stop() { stopRecording(); source.stop() }
+    fun stop() { stopRecording(); stopLatencyTest(); source.stop() }
     fun link(): LinkStats.Snapshot = pipeline.link.snapshot()
 
     // ---- the latency path -------------------------------------------------------------------
@@ -64,6 +70,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
     private fun onStomp(e: StompEvent, fireAtNanos: Long) {
         if (fireAtNanos <= System.nanoTime()) output.play(e.note, e.velocity) else scheduler.schedule(fireAtNanos, e)
         recorder?.stomp(e, fireAtNanos)
+        if (latencyProbe != null) latency.stomp(e.arrivalNanos, maxOf(fireAtNanos, e.arrivalNanos))
         synchronized(recentStomps) { recentStomps.addLast(e); while (recentStomps.size > 50) recentStomps.removeFirst() }
         onStompUi?.invoke(e)
         // Live debug without the app UI: adb logcat -s Stomp
@@ -139,7 +146,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         val f = File(dir, "stomp-%tY%<tm%<td-%<tH%<tM%<tS.csv".format(java.util.Date()))
         val w = StompLogWriter(f.bufferedWriter(bufferSize = 1 shl 16))   // large buffer: fewer disk writes on the GATT thread
         w.header(config, pipeline.placement, mapOf(
-            "rateHz" to "$RATE_HZ", "rateReg" to "${source.rateRegister}", "bandwidthReg" to "${source.bandwidthRegister}",
+            "rateHz" to "$rateHz", "rateReg" to "${source.rateRegister}", "bandwidthReg" to "${source.bandwidthRegister}",
             "batteryV" to "${source.batteryVolts}", "device" to (source.deviceName ?: "?"),
             "phone" to "${Build.MANUFACTURER} ${Build.MODEL}", "android" to "${Build.VERSION.SDK_INT}",
         ))
@@ -150,6 +157,22 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         return f
     }
 
+    /**
+     * Copies a recording to the phone's Downloads/StompBox folder, where the Files app, a USB
+     * cable (no adb) and any upload page can see it. Returns the folder-relative name, or null.
+     */
+    fun saveToDownloads(f: File): String? = runCatching {
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, f.name)
+            put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/csv")
+            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_DOWNLOADS}/StompBox")
+        }
+        val r = context.contentResolver
+        val uri = r.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)!!
+        r.openOutputStream(uri)!!.use { out -> f.inputStream().use { it.copyTo(out) } }
+        "Download/StompBox/${f.name}"
+    }.onFailure { Log.w("Stomp", "save to Downloads failed", it) }.getOrNull()
+
     fun stopRecording(): File? {
         val w = recorder ?: return null
         recorder = null
@@ -159,6 +182,24 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         return recordFile
     }
 
+    // ---- live latency test ------------------------------------------------------------------
+
+    val latency = LatencyMeter()
+    @Volatile private var latencyProbe: LatencyProbe? = null
+    val isLatencyTesting get() = latencyProbe != null
+
+    /** Listens with the mic and scores every stomp (see [LatencyMeter]). Needs RECORD_AUDIO. */
+    fun startLatencyTest(): Boolean {
+        if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return false
+        latency.clear()
+        // Short refractory: with low latency the drum comes only tens of ms after the impact.
+        latencyProbe = LatencyProbe(refractoryMs = 30f).also { it.onOnset = latency::onset; it.start() }
+        return true
+    }
+
+    fun stopLatencyTest() { latencyProbe?.stop(); latencyProbe = null }
+
     // ---- settings ---------------------------------------------------------------------------
 
     private fun loadMode() = prefs.getString("mode", null)?.let { Mode.valueOf(it) } ?: Mode.SHOE
@@ -167,6 +208,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         val saved = prefs.getString("config.$m", null) ?: return StompConfig.forMode(m)
         return runCatching { StompConfig.forMode(m).with(saved.split(' ').associate { it.substringBefore('=') to it.substringAfter('=') }) }
             .getOrDefault(StompConfig.forMode(m))
+            .copy(zonesEnabled = false)     // single stomp for the first iteration
     }
 
     private fun saveConfig(c: StompConfig) =
@@ -179,5 +221,5 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         Placement(v(p[0]), AngleConvention(c[0], c[1]), p[2].toDouble(), p[3].takeIf { it.isNotEmpty() }?.let(::v))
     }.getOrDefault(Placement.DEFAULT)
 
-    companion object { const val RATE_HZ = 200 }
+    companion object { val RATES = listOf(200, 100, 50) }
 }

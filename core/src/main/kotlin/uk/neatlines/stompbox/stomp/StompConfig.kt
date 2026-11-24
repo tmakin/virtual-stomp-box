@@ -35,7 +35,7 @@ data class StompConfig(
     val velocityCurve: Double = 0.6,     // <1 makes soft stomps louder
     val gyroGateDps: Double = 0.0,       // >0: require this much rotation in the last [gyroGateMs] (rejects bumps)
     val gyroGateMs: Double = 150.0,
-    val zonesEnabled: Boolean = true,    // needs a tilt pose in the Placement
+    val zonesEnabled: Boolean = false,   // heel/toe split; needs a tilt pose in the Placement. Off for the first iteration.
     val heelTiltDeg: Double = 8.0,       // toes up at least this much → HEEL
     val toeTiltDeg: Double = 8.0,        // toes down at least this much → TOE
     val orientationLagSamples: Int = 2,  // read orientation from before the impact disturbed it
@@ -92,7 +92,7 @@ data class StompConfig(
         val SHOE = StompConfig()
         val LEG = StompConfig(
             mode = Mode.LEG, feature = Feature.JERK, minThresholdG = 0.8, noiseFactor = 5.0,
-            velocityFullScaleG = 3.0, zonesEnabled = false,
+            velocityFullScaleG = 3.0,
         )
         fun forMode(m: Mode) = if (m == Mode.SHOE) SHOE else LEG
     }

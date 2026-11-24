@@ -24,7 +24,7 @@ class StompDetectorTest {
     @Test fun detectsEveryStompOnceWithZones() {
         val st = stomps(30)
         for (feature in Feature.entries) {
-            val ev = runDetector(StompConfig.SHOE.copy(feature = feature), st)
+            val ev = runDetector(StompConfig.SHOE.copy(feature = feature, zonesEnabled = true), st)
             assertEquals("$feature count", st.size, ev.size)
             ev.zip(st).forEach { (e, s) ->
                 assertEquals("$feature timing", s.atSample.toLong(), e.sampleIndex)

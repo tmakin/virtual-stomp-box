@@ -15,7 +15,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import uk.neatlines.stompbox.debug.StompTuningActivity
 import uk.neatlines.stompbox.stomp.StompEvent
-import uk.neatlines.stompbox.stomp.Zone
+import uk.neatlines.stompbox.ui.padForSystemBars
 
 /**
  * Test app home screen: connect to the WT901, see and hear each stomp, open the tuning screen.
@@ -31,7 +31,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 48, 32, 32) }
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; padForSystemBars(32) }
 
         status = TextView(this).apply { textSize = 13f }
         big = TextView(this).apply {
@@ -78,9 +78,8 @@ class MainActivity : Activity() {
     }
 
     private fun show(e: StompEvent) {
-        big.text = "${e.zone}\n${e.velocity}"
-        val c = when (e.zone) { Zone.HEEL -> 0xFFFF9800.toInt(); Zone.TOE -> Color.MAGENTA; Zone.FLAT -> 0xFF2E7D32.toInt() }
-        big.setBackgroundColor(c)
+        big.text = "STOMP\n${e.velocity}"
+        big.setBackgroundColor(0xFF2E7D32.toInt())
         big.animate().cancel()
         big.alpha = 1f
         big.animate().alpha(0.35f).setDuration(250).start()
@@ -92,7 +91,7 @@ class MainActivity : Activity() {
             status.text = buildString {
                 append("Sensor: ${s.deviceName ?: "-"} · ${s.status}")
                 if (!s.batteryVolts.isNaN()) append(" · battery %.2f V".format(s.batteryVolts))
-                append("\nMode ${e.config.mode} · timing ${e.config.timing} · stomps ${e.pipeline.detector.triggers}")
+                append("\nMode ${e.config.mode} · timing ${e.config.timing} · ${e.rateHz} Hz · stomps ${e.pipeline.detector.triggers}")
                 append("\nAudio buffer %.1f ms".format(app.synth.bufferMs))
                 if (s.status == "streaming") append("\n").append(e.link().format())
             }

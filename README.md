@@ -16,6 +16,13 @@ example `apk-main`.
 
 Later builds install over the old one and keep your tuning and calibration.
 
+To get data off the phone, use **Tune & debug**:
+
+- **Copy status** puts the link figures, latency and settings on the clipboard; paste them into a message.
+- **Record**, then **Stop & save**, writes a CSV to `Download/StompBox/` (open the Files app, or plug in a
+  USB cable and pick File transfer) and opens the share sheet (Drive, Gmail, Nearby Share…).
+- **Start latency test** measures stomp → sound live with the mic. Put the phone on the floor and use its speaker.
+
 ## What's here
 
 - **[docs/wt901-design.md](docs/wt901-design.md)**: the design. It covers how orientation and

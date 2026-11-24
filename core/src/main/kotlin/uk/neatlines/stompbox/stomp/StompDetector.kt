@@ -47,11 +47,11 @@ data class DebugFrame(
 class StompDetector(
     @Volatile var config: StompConfig,
     @Volatile var placement: Placement = Placement.DEFAULT,
-    private val sampleRateHz: Double = 200.0,
+    /** Can change at runtime when the sensor rate is changed. */
+    @Volatile var sampleRateHz: Double = 200.0,
     private val onStomp: (StompEvent) -> Unit,
     @Volatile var onDebug: ((DebugFrame) -> Unit)? = null,
 ) {
-    private val dtMs = 1000.0 / sampleRateHz
     private var index = -1L
     private var prev: WitSample? = null
     private var hpIn = 0.0
@@ -70,6 +70,7 @@ class StompDetector(
         index++
         val c = config
         val p = placement
+        val dtMs = 1000.0 / sampleRateHz
 
         // Orientation from a few samples back; the impact itself can disturb the fused angles.
         history.addLast(s.roll.toDouble() to s.pitch.toDouble())

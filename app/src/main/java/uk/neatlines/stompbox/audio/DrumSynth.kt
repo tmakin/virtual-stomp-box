@@ -25,7 +25,12 @@ class DrumSynth(context: Context) : StompOutput {
     private val rate = am.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: 48_000
     private val burst = am.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)?.toIntOrNull() ?: 192
 
-    private val kick = render(0.45) { t -> sin(2 * PI * (50 * t + 100 * 0.03 * (1 - exp(-t / 0.03)))) * exp(-t / 0.22) }
+    // Phone speakers barely reproduce a kick's 50–150 Hz body, so the attack gets a 2 ms click
+    // and a short burst of noise: that is what you hear first (and what the latency test's mic catches).
+    private val kick = Random(2).let { r -> render(0.45) { t ->
+        0.8 * sin(2 * PI * (50 * t + 100 * 0.03 * (1 - exp(-t / 0.03)))) * exp(-t / 0.22) +
+            0.6 * sin(2 * PI * 3000 * t) * exp(-t / 0.002) + 0.4 * r.nextDouble(-1.0, 1.0) * exp(-t / 0.004)
+    } }
     private val snare = Random(1).let { r -> render(0.3) { t -> (r.nextDouble(-1.0, 1.0) * 0.7 * exp(-t / 0.10)) + 0.5 * sin(2 * PI * 185 * t) * exp(-t / 0.05) } }
     private val click = render(0.03) { t -> sin(2 * PI * 2000 * t) * exp(-t / 0.006) }
 

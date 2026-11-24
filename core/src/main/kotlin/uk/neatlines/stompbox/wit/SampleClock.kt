@@ -34,6 +34,12 @@ class SampleClock(
     private val recentResidual = LongArray(windowSamples)
     private val arrivalHistory = LongArray(rateWindowSamples)
 
+    /** Start again at a new nominal rate (after the sensor's rate register is changed). */
+    fun reset(nominalRateHz: Double) {
+        periodNanos = 1e9 / nominalRateHz; index = -1; offset = Long.MAX_VALUE; originIndex = 0
+        recentResidual.fill(0); arrivalHistory.fill(0)
+    }
+
     /** Arrival time minus estimated sample time of the latest sample: link delay plus a constant. */
     var lastLagNanos: Long = 0; private set
 
