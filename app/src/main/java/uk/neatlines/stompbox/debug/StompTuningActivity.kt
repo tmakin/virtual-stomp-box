@@ -38,12 +38,18 @@ import java.io.File
  * The app must pass its engine in via [engineHolder] before starting this activity.
  */
 class StompTuningActivity : Activity() {
-    companion object { var engineHolder: StompEngine? = null }
+    companion object {
+        var engineHolder: StompEngine? = null
+        private const val PACER_MS = 2000L
+        private val PACER_IDLE = Color.rgb(60, 60, 60)
+        private val PACER_FLASH = Color.rgb(80, 230, 90)
+    }
 
     private lateinit var engine: StompEngine
     private lateinit var status: TextView
     private lateinit var latencyText: TextView
     private lateinit var latencyButton: Button
+    private lateinit var pacer: TextView
     private lateinit var last: TextView
     private lateinit var saved: TextView
     private lateinit var plot: StompPlotView
@@ -62,11 +68,17 @@ class StompTuningActivity : Activity() {
         col.addView(header("Latency test"))
         col.addView(TextView(this).apply {
             textSize = 12f
-            text = "Phone on the floor next to your foot, sound on (phone speaker, not Bluetooth), " +
-                "stomp about once a second. The mic hears the impact and the drum."
+            text = "Phone on the floor next to your foot, sound on (phone speaker, not Bluetooth). " +
+                "Stomp once each time the bar below flashes (every 2 s). The mic hears the impact and the drum."
         })
         latencyButton = button("Start latency test") { toggleLatency() }
         col.addView(latencyButton)
+        // Silent visual pacer: a sound would confuse the mic's onset detection.
+        pacer = TextView(this).apply {
+            textSize = 22f; gravity = android.view.Gravity.CENTER; setTextColor(Color.BLACK)
+            setBackgroundColor(PACER_IDLE); text = ""
+        }
+        col.addView(pacer, LinearLayout.LayoutParams(MATCH_PARENT, 140))
         latencyText = TextView(this).apply { textSize = 15f; setTextIsSelectable(true) }
         col.addView(latencyText)
 
@@ -138,12 +150,13 @@ class StompTuningActivity : Activity() {
         setContentView(ScrollView(this).apply { addView(col); padForSystemBars(24); clipToPadding = false })
         engine.pipeline.detector.onDebug = plot::add
         latencyButton.text = if (engine.isLatencyTesting) "Stop latency test" else "Start latency test"
+        if (engine.isLatencyTesting) pacer.post(pace)
         status.post(refresh)
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        if (::engine.isInitialized) { engine.pipeline.detector.onDebug = null; status.removeCallbacks(refresh) }
+        if (::engine.isInitialized) { engine.pipeline.detector.onDebug = null; status.removeCallbacks(refresh); pacer.removeCallbacks(pace) }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
@@ -155,9 +168,30 @@ class StompTuningActivity : Activity() {
     private fun hasMic() = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     private fun toggleLatency() {
-        if (engine.isLatencyTesting) { engine.stopLatencyTest(); latencyButton.text = "Start latency test"; return }
+        if (engine.isLatencyTesting) {
+            engine.stopLatencyTest(); latencyButton.text = "Start latency test"
+            pacer.removeCallbacks(pace); pacer.setBackgroundColor(PACER_IDLE); pacer.text = ""
+            return
+        }
         if (!hasMic()) { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 3); return }
-        if (engine.startLatencyTest()) latencyButton.text = "Stop latency test"
+        if (engine.startLatencyTest()) {
+            latencyButton.text = "Stop latency test"
+            pacer.removeCallbacks(pace); pacer.postDelayed(pace, 1000)
+        }
+    }
+
+    /** Flashes the pacer bar for 250 ms every [PACER_MS], with a countdown in between. */
+    private val pace = object : Runnable {
+        private var beatAt = 0L
+        override fun run() {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now >= beatAt) beatAt = now + PACER_MS
+            val left = beatAt - now
+            val flashing = PACER_MS - left < 250
+            pacer.setBackgroundColor(if (flashing) PACER_FLASH else PACER_IDLE)
+            pacer.text = if (flashing) "STOMP" else "%.1f".format(left / 1000.0)
+            pacer.postDelayed(this, if (flashing) 250 - (PACER_MS - left) + 1 else minOf(100L, left))
+        }
     }
 
     private val refresh = object : Runnable {
@@ -165,8 +199,7 @@ class StompTuningActivity : Activity() {
             status.text = statusText()
             val r = engine.latency.poll(System.nanoTime())
             if (engine.isLatencyTesting || r.isNotEmpty()) {
-                latencyText.text = LatencyMeter.summary(r, engine.latency.unpaired) +
-                    (if (engine.latency.unpaired > 0) "\n${engine.latency.unpaired} stomps with no impact heard" else "")
+                latencyText.text = LatencyMeter.summary(r, engine.latency.unpaired)
             }
             engine.recentStomps.let { synchronized(it) { it.lastOrNull() } }?.let { e ->
                 last.text = "last stomp: vel ${e.velocity}  peak %.2f g  (total ${engine.pipeline.detector.triggers})".format(e.peak)

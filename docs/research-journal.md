@@ -224,6 +224,13 @@ impact in sensor data: first jolt at 354 ms, max 4.44 g
   shows the count. Two new tests cover a 500 ms rhythm with and without the impacts heard.
 - **Earlier latency figures (tests 1–7) are suspect** until re-measured with this build.
 
+## 2026-11-24: Stomp pace
+
+- The tester stomps at about **2 per second** (500 ms apart). With the old meter's flaw that gives
+  *detect* ≈ 500 − 100 = 400 ms, close to every figure in tests 1–7.
+- **Change:** a silent pacer on the tuning screen flashes **STOMP** every 2 s during the latency
+  test, with a countdown in between. It's visual only, so the mic isn't confused.
+
 ## Open questions
 
 - With the fixed meter: what is the real *detect*? Slow single stomps (one every ~2 s) are the cleanest test.
