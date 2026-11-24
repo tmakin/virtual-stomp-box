@@ -6,6 +6,7 @@ import android.os.Process
 import android.util.Log
 import uk.neatlines.stompbox.debug.LinkStats
 import uk.neatlines.stompbox.debug.StompLogWriter
+import uk.neatlines.stompbox.input.LinkMode
 import uk.neatlines.stompbox.input.WitBleSource
 import uk.neatlines.stompbox.latency.LatencyMeter
 import uk.neatlines.stompbox.latency.LatencyProbe
@@ -39,6 +40,15 @@ class StompEngine(private val context: Context, private val output: StompOutput)
     var rateHz: Int
         get() = pipeline.rateHz
         set(v) { prefs.edit().putInt("rateHz", v).apply(); source.rateHz = v; pipeline.rateHz = v }
+
+    /** BLE link setup (MTU / PHY); persisted, and changing it reconnects. */
+    var linkMode: LinkMode
+        get() = source.linkMode
+        set(v) { prefs.edit().putString("linkMode", v.name).apply(); source.linkMode = v }
+
+    init {
+        source.linkMode = runCatching { LinkMode.valueOf(prefs.getString("linkMode", null)!!) }.getOrDefault(LinkMode.DEFAULT_MTU)
+    }
 
     /** Latest stomps for the UI, newest last. */
     val recentStomps = ArrayDeque<StompEvent>()

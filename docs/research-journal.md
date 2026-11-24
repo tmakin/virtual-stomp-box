@@ -174,9 +174,26 @@ impact in sensor data: first jolt at 420 ms, max 1.09 g
     queued (sampling or filtering in the firmware). That would point at the sensor's settings
     (bandwidth / output mode) or at a different sensor.
 
+## 2026-11-24: WitMotion app shows no lag
+
+- With Stomp Box disconnected, the WitMotion app's live graph follows a sharp tap on the sensor
+  with **no perceptible lag**. A 420 ms lag would be easy to see, so **the sensor can deliver
+  fresh data**, and something about how *this app* sets up the link brings out the delay.
+- **Hypothesis E: the large MTU.** This app requests MTU 247 and the 2M PHY, and the sensor then
+  packs ~8 frames into each notification. WitMotion's SDKs (as far as we can see) keep the default
+  23-byte MTU, so each notification carries one 20-byte frame. The firmware's packing path, used
+  only when the MTU allows it, may hold data in a deep buffer.
+- **Changes (this commit):**
+  - A **BLE link** setting: *MTU 23, 1M PHY* (new default, like the WitMotion app), *MTU 23, 2M PHY*
+    and *MTU 247, 2M PHY* (the old behaviour). Changing it reconnects. The BLE status line names the
+    mode and the MTU granted; frames per notification and pings restart on each connection.
+  - Releases also carry `stompbox-latest.apk`, a fixed link to the newest build.
+- **Prediction:** at MTU 23, frames/notification ≈ 1 and *detect* drops to roughly 30–80 ms. If it
+  doesn't, compare the ping round trip between the modes.
+
 ## Open questions
 
-- Is the register-read round trip ~420 ms (send path) or short (old data)?
+- Does MTU 23 remove the delay (hypothesis E)? Is the register-read round trip ~420 ms (send path) or short (old data)?
 - If it doesn't: the delay is inside the sensor firmware. Check WitMotion's own app for the
   same lag (tap the sensor and watch the graph). Ask WitMotion support, or consider another sensor.
 - Make sure the WitMotion app (or anything else) isn't also connected: the manual warns of lag

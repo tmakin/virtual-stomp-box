@@ -45,6 +45,14 @@ class WitBleSource(
     /** Output rate to set on the sensor. Changing it while connected reconfigures the sensor. */
     @Volatile var rateHz: Int = rateHz
         set(v) { require(v in Wit.RATE_CODES); field = v; handler.post { configureIfNeeded() } }
+    /**
+     * How the connection is set up; changing it reconnects. Experiment: the WitMotion app shows no
+     * lag, and it (as far as we know) keeps the default 23-byte MTU and 1M PHY, so the sensor sends
+     * one frame per notification. With MTU 247 the sensor packs ~8 frames per notification.
+     */
+    @Volatile var linkMode: LinkMode = LinkMode.DEFAULT_MTU
+        set(v) { field = v; handler.post { gatt?.disconnect() } }   // the disconnect handler reconnects
+    @Volatile var mtu = 23; private set
     @Volatile var status: String = "idle"; private set
     @Volatile var batteryVolts: Double = Double.NaN; private set
     @Volatile var rateRegister: Int = -1; private set
@@ -71,7 +79,8 @@ class WitBleSource(
     }
     private val pings = ArrayDeque<Double>()
     @Volatile private var pingSentAt = 0L
-    val framesPerNotification: Double get() = if (notifications == 0L) 0.0 else parser.frames.toDouble() / notifications
+    private var framesAtConnect = 0L
+    val framesPerNotification: Double get() = if (notifications == 0L) 0.0 else (parser.frames - framesAtConnect).toDouble() / notifications
     var onStatus: ((String) -> Unit)? = null
 
     private val manager = context.getSystemService(BluetoothManager::class.java)
@@ -127,10 +136,13 @@ class WitBleSource(
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, st: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                setStatus("connected, setting up")
+                setStatus("connected, setting up (${linkMode.label})")
+                mtu = 23; notifications = 0; framesAtConnect = parser.frames
+                connIntervalMs = -1.0; connLatency = -1; connTimeoutMs = -1
+                synchronized(pings) { pings.clear() }
                 g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-                g.setPreferredPhy(BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_OPTION_NO_PREFERRED)
-                handler.postDelayed({ if (!g.requestMtu(247)) g.discoverServices() }, 200)
+                if (linkMode.phy2m) g.setPreferredPhy(BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_OPTION_NO_PREFERRED)
+                handler.postDelayed({ if (!linkMode.bigMtu || !g.requestMtu(247)) g.discoverServices() }, 200)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 setStatus("disconnected ($st), retrying")
                 g.close(); gatt = null; write = null
@@ -145,7 +157,7 @@ class WitBleSource(
             Log.i(TAG, "connection updated: interval ${interval * 1.25} ms, peripheral latency $latency, timeout ${timeout * 10} ms, status $st")
         }
 
-        override fun onMtuChanged(g: BluetoothGatt, mtu: Int, st: Int) { g.discoverServices() }
+        override fun onMtuChanged(g: BluetoothGatt, mtu: Int, st: Int) { this@WitBleSource.mtu = mtu; g.discoverServices() }
 
         override fun onServicesDiscovered(g: BluetoothGatt, st: Int) {
             val svc = g.getService(Wit.SERVICE) ?: return setStatus("not a WT901 (no FFE5 service)")
@@ -243,4 +255,10 @@ class WitBleSource(
     private fun setStatus(s: String) { status = s; Log.i(TAG, s); onStatus?.invoke(s) }
 
     private companion object { const val TAG = "WitBle" }
+}
+
+enum class LinkMode(val label: String, val bigMtu: Boolean, val phy2m: Boolean) {
+    DEFAULT_MTU("MTU 23, 1M PHY", false, false),
+    DEFAULT_MTU_2M("MTU 23, 2M PHY", false, true),
+    BIG_MTU("MTU 247, 2M PHY", true, true),
 }

@@ -94,6 +94,10 @@ class StompTuningActivity : Activity() {
                 engine.rateHz = r[(r.indexOf(engine.rateHz) + 1) % r.size]
             },
         ))
+        col.addView(cycler({ "BLE link: ${engine.linkMode.label}" }) {
+            val m = uk.neatlines.stompbox.input.LinkMode.entries
+            engine.linkMode = m[(engine.linkMode.ordinal + 1) % m.size]
+        })
         col.addView(button("Calibrate: stand still for 1 s") { b ->
             b.text = "hold still…"
             engine.calibrateRest { runOnUiThread { b.text = "Calibrate: stand still for 1 s ✓" } }
@@ -178,7 +182,7 @@ class StompTuningActivity : Activity() {
             append("${src.deviceName ?: "-"}: ${src.status}")
             if (!src.batteryVolts.isNaN()) append("  battery %.2f V".format(src.batteryVolts))
             append("\nsensor set to ${engine.rateHz} Hz (rate reg ${src.rateRegister}, bandwidth reg ${src.bandwidthRegister})")
-            append("\nBLE: interval %s, peripheral latency %s, timeout %s, %.2f frames/notification, flushes %d".format(
+            append("\nBLE (${src.linkMode.label}, MTU ${src.mtu}): interval %s, peripheral latency %s, timeout %s, %.2f frames/notification, flushes %d".format(
                 if (src.connIntervalMs < 0) "?" else "%.2f ms".format(src.connIntervalMs),
                 if (src.connLatency < 0) "?" else "${src.connLatency}",
                 if (src.connTimeoutMs < 0) "?" else "${src.connTimeoutMs} ms",
