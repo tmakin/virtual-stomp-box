@@ -231,10 +231,37 @@ impact in sensor data: first jolt at 354 ms, max 4.44 g
 - **Change:** a silent pacer on the tuning screen flashes **STOMP** every 2 s during the latency
   test, with a countdown in between. It's visual only, so the mic isn't confused.
 
+## 2026-11-24: Latency test 8 (build #13 `276c684`, fixed meter, 2 s pacer)
+
+```
+BLE (MTU 247, 2M PHY, MTU 247): interval 15.00 ms, peripheral latency 1, 8.00 frames/notification
+ping (register read round trip): median 112 ms, min 41, max 185 (n=18)
+rate 199.4 Hz, 8.85 frames/event, interval median 44.72 ms p95 77.90, lag median 40.4 p95 81.7 max 108.6 ms
+audio: buffer 10.0 ms, output latency 79 ms, fast path yes
+latency: median of 11: detect 86 ms · output 100 ms · total 188 ms
+impact in sensor data: first jolt at 55 ms, max 2.59 g
+```
+
+- **Confirmed: the ~420 ms was the meter's flaw.** With single stomps 2 s apart and the fixed
+  meter, every stomp was paired (none unheard): **detect 86 ms, output 100 ms, total 188 ms**.
+  Tests 1–7 measured the stomp period minus the output delay, so their *detect* figures, and the
+  hypotheses A–E built on them, are void. The link observations still stand: 15 ms interval, ~8
+  frames per notification every ~44 ms, all frames arriving.
+- **Where the 188 ms goes now:**
+  - **~55 ms, impact → first jolt in the data:** the sensor packs frames on a ~44 ms timer, so
+    data waits up to one packing period, plus link time.
+  - **~30 ms, first jolt → detection:** about one more notification. The first sample over 0.5 g
+    is in one burst, and the 1.2 g threshold is crossed in the next. A detector lever.
+  - **~100 ms output:** the biggest part. Pixel speaker path; AudioTrack says 79 ms.
+- **Cleanup due:** the flush, the link-mode setting (the MTU can't be kept at 23 on Android 14+)
+  and the 10 Hz rate were for the void hypotheses.
+
 ## Open questions
 
-- With the fixed meter: what is the real *detect*? Slow single stomps (one every ~2 s) are the cleanest test.
-- If the impact often goes unheard, the mic onset detector needs tuning for footfalls.
+- Can the detector fire on the first burst (cut ~30 ms)? Look at a recording of the samples
+  around an impact.
+- Output: measure wired / USB-C audio (AudioTrack timestamp figure, since the mic can't hear
+  headphones); try AAudio/Oboe MMAP.
 - If it doesn't: the delay is inside the sensor firmware. Check WitMotion's own app for the
   same lag (tap the sensor and watch the graph). Ask WitMotion support, or consider another sensor.
 - Make sure the WitMotion app (or anything else) isn't also connected: the manual warns of lag

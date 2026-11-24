@@ -230,17 +230,18 @@ how to install it from the CI release.
 
 ## Latency
 
-The first phone test heard about 400 ms from stomp to sound, which is far above the ~15–30 ms
-budget worked out above. The latency test splits it:
+Measured on a Pixel 8a (Android 17), phone speaker, 200 Hz, single stomps 2 s apart (build #13;
+the full story is in [research-journal.md](research-journal.md)):
 
-| Part | Expected | If it is large |
-|---|---|---|
-| detect: impact → detected | 10–25 ms | The sensor sends more frames than the link carries, so they queue in its UART-to-BLE buffer (the status line warns when the received rate is below the set rate). Lower the sensor rate. Also check the connection interval in the status line: the sensor may have negotiated a long one. |
-| output: play → heard | 20–40 ms on a Pixel speaker | Bluetooth headphones or speakers add 150–300 ms. Use the phone speaker or a wired output. |
-| total | sum of the two | Total is exact (both ends are mic times). Detect and output each carry the mic's own input delay, with opposite signs. |
+| Part | Measured | What it is made of | Levers |
+|---|---|---|---|
+| detect: impact → detected | **86 ms** | Sensor + link: the first jolt arrives at ~55 ms. The sensor packs ~8 frames into one notification every ~44 ms, whatever the connection interval (15 ms here). Then ~30 ms more until the detector fires, about one more notification. | Detector: fire on the first jolt of the burst (lower threshold or jerk feature). The ~44 ms packing is in the sensor firmware. |
+| output: play → heard | **100 ms** | App buffer 10 ms; AudioTrack reports 79 ms. The rest is the Pixel speaker path (speaker protection DSP), even with the fast path granted. | Wired / USB-C output; AAudio/Oboe MMAP exclusive. Never Bluetooth audio (150–300 ms). |
+| total | **188 ms** | Exact (both ends are mic times). | |
 
-Other levers once the large term is gone: STEADY → IMMEDIATE timing; peak wait 0; Feature
-JERK reacts a sample earlier than VERTICAL; 2M PHY / connection priority (already requested).
+Early tests reported ~420 ms *detect*. That was a flaw in the meter, fixed in build #12: when the
+mic missed the impact, it took the previous stomp's drum for it, so *detect* read as the stomp
+period minus the output delay.
 
 ## Risks and open questions
 
