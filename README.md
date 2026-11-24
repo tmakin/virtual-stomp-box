@@ -33,7 +33,6 @@ To get data off the phone, use **Tune & debug**:
   and debugging and tuning.
 - **[docs/research-journal.md](docs/research-journal.md)**: log of hardware tests, results and
   what changed because of them.
-- **[docs/code-review-handoff.md](docs/code-review-handoff.md)**: where to start a code review.
 - **[app](app)**: the Android app.
   - The home screen shows and plays each stomp.
   - The **Tune & debug** screen has a live plot, sliders, calibration, and recording with sharing.
