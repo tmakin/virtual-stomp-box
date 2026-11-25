@@ -61,15 +61,17 @@ class LatencyMeter(
 
     @Synchronized fun poll(nowNanos: Long): List<Measurement> {
         val due = stomps.filter { nowNanos - it.playNanos >= settleNanos }.sortedBy { it.detectedNanos }
+        val all = stomps.sortedBy { it.detectedNanos }
         stomps.removeAll(due.toSet())
         for (s in due) {
+            val next = all.getOrNull(all.indexOf(s) + 1)?.detectedNanos
             // Impact: the last sound before the detection. Drum: the first sound after play().
             // An impact can ring and re-trigger the onset detector; step back to the first onset of the cluster.
             val floor = floorNanos
             var i = onsets.indexOfLast { it <= s.detectedNanos && s.detectedNanos - it <= searchNanos && it > floor }
             while (i > 0 && onsets[i] - onsets[i - 1] < clusterNanos && onsets[i - 1] > floor) i--
             val impact = onsets.getOrNull(i)
-            val drum = onsets.firstOrNull { it >= s.playNanos && it - s.playNanos <= searchNanos }
+            val drum = drumFor(s, next)
             floorNanos = maxOf(floor, (drum ?: s.playNanos) + clusterNanos)
             if (impact == null) { unpaired++; continue }
             val first = sampleTimes.indices.firstOrNull { sampleTimes[it] >= impact && sampleJolts[it] >= joltG }
@@ -92,6 +94,20 @@ class LatencyMeter(
             .let { if (it < 0) sampleTimes.size else it }
         if (drop > 0) { sampleTimes.subList(0, drop).clear(); sampleJolts.subList(0, drop).clear() }
         return results.toList()
+    }
+
+    /**
+     * The first sound after play(), unless it is really the next stomp's impact: with the drum
+     * unheard (sound off, or the mic missed it), taking that impact as this drum would also put the
+     * floor past it and leave the next stomp with no impact. Between play() and the next detection:
+     * two or more separate sounds are drum, then impact; a lone sound is whichever it is nearer.
+     */
+    private fun drumFor(s: Stomp, nextDetected: Long?): Long? {
+        val window = onsets.filter { it >= s.playNanos && it - s.playNanos <= searchNanos && (nextDetected == null || it < nextDetected) }
+        val first = window.firstOrNull() ?: return null
+        if (nextDetected == null) return first
+        val laterSound = window.any { it - first >= clusterNanos }
+        return if (laterSound || first - s.playNanos <= nextDetected - first) first else null
     }
 
     @Synchronized fun clear() { sampleTimes.clear(); sampleJolts.clear(); onsets.clear(); stomps.clear(); results.clear(); unpaired = 0; floorNanos = Long.MIN_VALUE }

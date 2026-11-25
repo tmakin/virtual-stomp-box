@@ -59,6 +59,8 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         set(m) { prefs.edit().putString("mode", m.name).apply(); pipeline.config = loadConfig(m) }
 
     fun start(address: String? = null) = source.start(address)
+    /** True from [start] until [stop] (scanning, connected or reconnecting). */
+    val isRunning get() = source.running
     fun stop() { stopRecording(); stopLatencyTest(); source.stop() }
     fun link(): LinkStats.Snapshot = pipeline.link.snapshot()
 

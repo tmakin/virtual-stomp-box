@@ -68,7 +68,7 @@ class WitBleSource(
     @Volatile var reconnects = 0; private set
     /** Gaps between notifications while streaming (normally ~44 ms; over 250 ms counts as a stall). */
     val gaps = GapCounter(thresholdMs = 250.0)
-    /** Writes Android refused or that got no reply in time. */
+    /** Writes that got no reply in time, or that Android still refused after [MAX_TRIES] tries. */
     @Volatile var failedWrites = 0; private set
 
     /** Register-read round trip (write `FF AA 27 40` → `55 71` reply), timed every 5 s. */
@@ -89,6 +89,8 @@ class WitBleSource(
     private var arrival = 0L
     private var scanCallback: ScanCallback? = null
     @Volatile private var stopped = true
+    /** True from [start] until [stop], including while scanning or reconnecting. */
+    val running get() = !stopped
     private val parser = WitPacketParser(
         onSample = { s -> onSample(s, arrival) },
         onRegisters = { reg, v -> onRegisters(reg, v) },
@@ -96,16 +98,21 @@ class WitBleSource(
 
     /** Connects to [address] if given, otherwise to the first device whose name starts with "WT". */
     fun start(address: String? = null) {
+        if (!stopped) return     // already running: a second start would open a second connection
         stopped = false; reconnects = 0; gaps.reset(); failedWrites = 0
-        if (address != null) { handler.post { connect(manager.adapter.getRemoteDevice(address)) }; return }
+        if (address != null) { handler.post { if (!stopped) connect(manager.adapter.getRemoteDevice(address)) }; return }
         setStatus("scanning")
         val scanner = manager.adapter.bluetoothLeScanner
         val cb = object : ScanCallback() {
+            // Results already queued can still arrive after stopScan; connect to the first one only.
+            private var found = false
             override fun onScanResult(type: Int, r: ScanResult) {
+                if (found) return
                 val name = r.scanRecord?.deviceName ?: r.device.name ?: return
                 if (!name.startsWith("WT")) return
+                found = true
                 scanner.stopScan(this)
-                handler.post { connect(r.device) }
+                handler.post { if (!stopped && gatt == null) connect(r.device) }
             }
             override fun onScanFailed(errorCode: Int) = setStatus("scan failed $errorCode")
         }
@@ -145,10 +152,12 @@ class WitBleSource(
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 g.close()
                 handler.post {
+                    // A stale connection (already replaced or stopped) must not touch the current one.
+                    if (gatt !== g) return@post
                     // Drop every timer and queued write of the old connection, or they pile up on each reconnect.
                     handler.removeCallbacksAndMessages(null)
                     resetWrites()
-                    if (gatt === g) { gatt = null; write = null }
+                    gatt = null; write = null
                     if (stopped) return@post
                     reconnects++
                     setStatus("disconnected ($st), reconnecting")
@@ -175,6 +184,9 @@ class WitBleSource(
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, st: Int) {
+            // A callback from a connection that stop() or a reconnect has replaced would start timers
+            // that never get cancelled.
+            if (g !== gatt) return
             setStatus("streaming")
             handler.post {
                 enqueue(Wit.readRegister(Wit.REG_RATE))
@@ -188,9 +200,12 @@ class WitBleSource(
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, st: Int) {
             handler.post {
+                // Ignore a reply from an old connection, or one that comes after its write timed out:
+                // it must not cancel the timeout of the write now in flight or release the queue early.
+                if (g !== gatt || inFlight == null) return@post
                 if (st != BluetoothGatt.GATT_SUCCESS) failedWrites++
                 handler.removeCallbacks(writeTimeout)
-                writeBusy = false
+                inFlight = null; writeBusy = false
                 pump()
             }
         }
@@ -198,6 +213,7 @@ class WitBleSource(
         // Android 13+ delivers the value directly; arrival time is taken before anything else.
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
             arrival = System.nanoTime()
+            if (g !== gatt) return
             gaps.mark(arrival)
             notifications++
             parser.feed(value)
@@ -205,11 +221,15 @@ class WitBleSource(
     }
 
     private val batteryPoll = object : Runnable {
-        override fun run() { enqueue(Wit.readRegister(Wit.REG_BATTERY)); handler.postDelayed(this, 10_000) }
+        override fun run() {
+            if (gatt == null) return     // disconnected or stopped: let the timer die
+            enqueue(Wit.readRegister(Wit.REG_BATTERY)); handler.postDelayed(this, 10_000)
+        }
     }
 
     private val ping = object : Runnable {
         override fun run() {
+            if (gatt == null) return
             enqueue(Wit.readRegister(Wit.REG_TEMP), isPing = true)
             handler.postDelayed(this, 5000)
         }
@@ -243,17 +263,20 @@ class WitBleSource(
 
     // ---- write queue (handler thread only) ---------------------------------------------------
 
-    private class Write(val cmd: ByteArray, val gapMs: Long, val isPing: Boolean)
+    private class Write(val cmd: ByteArray, val gapMs: Long, val isPing: Boolean) { var tries = 0 }
     private val writes = ArrayDeque<Write>()
+    /** A write is scheduled or in flight; the next one waits. */
     private var writeBusy = false
-    private val writeTimeout = Runnable { failedWrites++; writeBusy = false; pump() }
+    /** The write Android accepted and whose onCharacteristicWrite hasn't come yet. */
+    private var inFlight: Write? = null
+    private val writeTimeout = Runnable { failedWrites++; inFlight = null; writeBusy = false; pump() }
 
     /** [gapMs]: wait this long before sending (the WitMotion SDKs leave ~100 ms between setup commands). */
     private fun enqueue(cmd: ByteArray, gapMs: Long = 0, isPing: Boolean = false) {
         writes.addLast(Write(cmd, gapMs, isPing)); pump()
     }
 
-    private fun resetWrites() { writes.clear(); writeBusy = false }
+    private fun resetWrites() { writes.clear(); inFlight = null; writeBusy = false }
 
     private fun pump() {
         if (writeBusy) return
@@ -264,11 +287,16 @@ class WitBleSource(
             if (g == null || c == null) { resetWrites(); return@postDelayed }
             if (w.isPing) pingSentAt = System.nanoTime()
             val rc = g.writeCharacteristic(c, w.cmd, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
-            if (rc != BluetoothStatusCodes.SUCCESS) {
-                failedWrites++; writeBusy = false
-                handler.postDelayed({ pump() }, 50)
-            } else {
+            if (rc == BluetoothStatusCodes.SUCCESS) {
+                inFlight = w
                 handler.postDelayed(writeTimeout, 1000)
+            } else {
+                // Usually "busy": the stack still waits on an earlier write (e.g. one that timed out
+                // here). Put it back at the front and retry, so a setup command is never skipped.
+                writeBusy = false
+                if (++w.tries < MAX_TRIES) writes.addFirst(Write(w.cmd, 0, w.isPing).also { it.tries = w.tries })
+                else { failedWrites++; Log.w(TAG, "write dropped after $MAX_TRIES tries (rc $rc)") }
+                handler.postDelayed({ pump() }, RETRY_MS)
             }
         }, w.gapMs)
     }
@@ -277,5 +305,8 @@ class WitBleSource(
 
     private companion object {
         const val TAG = "WitBle"
+        /** A refused write is retried every [RETRY_MS] up to [MAX_TRIES] times (~1 s). */
+        const val RETRY_MS = 50L
+        const val MAX_TRIES = 20
     }
 }

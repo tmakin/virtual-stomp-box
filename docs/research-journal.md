@@ -298,6 +298,31 @@ A review pass over the cleanup above. Nothing here changes how a stomp is detect
 - **Settings:** a saved threshold over 2.0 g is capped when loaded, not only on the slider. A
   saved rate that is no longer offered falls back to 200 Hz.
 
+## Nov 25, 2026 · review fixes: BLE write queue, duplicate connections, latency pairing
+
+From a code review of the build above. Not yet tried on hardware.
+
+- **BLE writes are no longer lost.** A write Android refused (usually "busy", because an earlier
+  write hadn't been answered yet) was dropped, so a setup step like UNLOCK or SAVE could go missing
+  and leave the sensor half-configured. It's now put back at the front of the queue and retried
+  every 50 ms for up to ~1 s. A reply that comes after its write timed out, or from an old
+  connection, is now ignored. Before, it cancelled the timeout of the write after it and sent the
+  next one too early. `failed writes` in the `stalls:` line now counts only writes that timed out
+  or were finally given up on.
+- **Only one connection at a time.** Two scan results arriving together could open two GATT
+  connections, and both fed the same parser. Tapping Connect after the home screen was recreated
+  (dark-mode switch, font size, split screen) started a second connection, because the button
+  kept its own flag. The scan now connects once, `start()` does nothing while already running,
+  and the button asks the engine.
+- **Timers from an old connection** (battery, ping) no longer start after Disconnect or a
+  reconnect, and they stop by themselves when there is no connection.
+- **Latency test with no drum heard:** the meter took the *next* stomp's impact for this stomp's
+  drum. With sound off and fast stomping, only the first stomp was measured (with a fake 450 ms
+  output) and the rest counted as "no impact heard". If the mic missed one drum, the next stomp
+  was lost. Between one stomp's play() and the next detection, two separate sounds now count as
+  drum then impact. A single sound counts as whichever of the two it's nearer to. New unit tests
+  cover both cases. The 2 s pacer kept this from showing in tests so far.
+
 ## Open questions
 
 - Can the detector fire on the first burst (cut ~30 ms)? Look at a recording of the samples
