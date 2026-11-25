@@ -46,6 +46,8 @@ class WitBleSource(
     private val bandwidthHz: Int = 188,
     /** Called on the GATT binder thread. Keep it short: it is on the latency path. */
     private val onSample: (WitSample, arrivalNanos: Long) -> Unit,
+    /** Called after the last sample of each notification, on the same thread. */
+    private val onPacketEnd: () -> Unit = {},
 ) : SensorSource {
     override val kind = "Bluetooth"
     @Volatile override var rateHz: Int = rateHz
@@ -241,6 +243,7 @@ class WitBleSource(
             gaps.mark(arrival)
             notifications++
             parser.feed(value)
+            onPacketEnd()
         }
     }
 

@@ -31,6 +31,7 @@ data class StompConfig(
     val deadTimeMs: Double = 90.0,       // … and at least this long after a trigger
     val highPassHz: Double = 4.0,        // VERTICAL only: removes slow leg motion
     val peakWaitSamples: Int = 0,        // wait this many samples for a higher peak (better velocity, +5 ms each at 200 Hz)
+    val eagerRatio: Double = 0.0,        // >0: at the end of a Bluetooth packet, fire if its last sample is over this × threshold
     val velocityFullScaleG: Double = 6.0,
     val velocityCurve: Double = 0.6,     // <1 makes soft stomps louder
     val gyroGateDps: Double = 0.0,       // >0: require this much rotation in the last [gyroGateMs] (rejects bumps)
@@ -50,6 +51,7 @@ data class StompConfig(
         "mode" to mode.name, "feature" to feature.name,
         "minThresholdG" to "$minThresholdG", "noiseFactor" to "$noiseFactor", "releaseRatio" to "$releaseRatio",
         "deadTimeMs" to "$deadTimeMs", "highPassHz" to "$highPassHz", "peakWaitSamples" to "$peakWaitSamples",
+        "eagerRatio" to "$eagerRatio",
         "velocityFullScaleG" to "$velocityFullScaleG", "velocityCurve" to "$velocityCurve",
         "gyroGateDps" to "$gyroGateDps", "gyroGateMs" to "$gyroGateMs", "zonesEnabled" to "$zonesEnabled",
         "heelTiltDeg" to "$heelTiltDeg", "toeTiltDeg" to "$toeTiltDeg", "orientationLagSamples" to "$orientationLagSamples",
@@ -69,6 +71,7 @@ data class StompConfig(
             "deadTimeMs" -> c.copy(deadTimeMs = v.toDouble())
             "highPassHz" -> c.copy(highPassHz = v.toDouble())
             "peakWaitSamples" -> c.copy(peakWaitSamples = v.toInt())
+            "eagerRatio" -> c.copy(eagerRatio = v.toDouble())
             "velocityFullScaleG" -> c.copy(velocityFullScaleG = v.toDouble())
             "velocityCurve" -> c.copy(velocityCurve = v.toDouble())
             "gyroGateDps" -> c.copy(gyroGateDps = v.toDouble())

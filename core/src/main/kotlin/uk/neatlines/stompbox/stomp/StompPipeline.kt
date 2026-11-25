@@ -51,4 +51,7 @@ class StompPipeline(
         link.add(arrivalNanos, clock.lastLagNanos)
         detector.onSample(s, t, arrivalNanos)
     }
+
+    /** Bluetooth only: call after the last sample of each notification (see [StompDetector.onPacketEnd]). */
+    fun onPacketEnd() = detector.onPacketEnd()
 }

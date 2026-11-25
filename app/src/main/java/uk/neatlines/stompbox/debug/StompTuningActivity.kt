@@ -145,6 +145,8 @@ class StompTuningActivity : Activity() {
         slider(col, "Dead time", "ms", 30.0, 300.0, 5.0, { it.deadTimeMs }) { c, v -> c.copy(deadTimeMs = v) }
         slider(col, "High-pass", "Hz", 0.5, 20.0, 0.5, { it.highPassHz }) { c, v -> c.copy(highPassHz = v) }
         slider(col, "Peak wait", "samples", 0.0, 3.0, 1.0, { it.peakWaitSamples.toDouble() }) { c, v -> c.copy(peakWaitSamples = v.toInt()) }
+        // Bluetooth only: fire on a packet's last sample at this fraction of the threshold (0 = off).
+        slider(col, "Eager (last sample of a packet)", "× threshold", 0.0, 1.0, 0.05, { it.eagerRatio }) { c, v -> c.copy(eagerRatio = v) }
         slider(col, "Velocity full scale", "g", 1.0, 16.0, 0.5, { it.velocityFullScaleG }) { c, v -> c.copy(velocityFullScaleG = v) }
         slider(col, "Velocity curve", "", 0.2, 2.0, 0.05, { it.velocityCurve }) { c, v -> c.copy(velocityCurve = v) }
         slider(col, "Gyro gate (0 = off)", "°/s", 0.0, 400.0, 10.0, { it.gyroGateDps }) { c, v -> c.copy(gyroGateDps = v) }
@@ -249,6 +251,7 @@ class StompTuningActivity : Activity() {
             }
             append("\nmode ${c.mode}  feature ${c.feature}  timing ${c.timing}")
             if (c.timing == Timing.STEADY) append(" (late ${engine.pipeline.timing.late})")
+            if (c.eagerRatio > 0) append("  eager %.2f (fired early ${engine.pipeline.detector.eagerTriggers})".format(c.eagerRatio))
             val synth = (application as StompApp).synth
             append("\naudio: ${synth.summary()}")
             append("\nstalls: ${if (engine.wired) "USB" else "BLE"} gaps ${src.gaps.summary()}, reconnects ${src.reconnects}, failed writes ${src.failedWrites}; " +

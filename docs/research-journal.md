@@ -402,6 +402,28 @@ impact (mic) → detected, arrival   median 61, 37-101 (n=10)  median 63, 54-116
 - The phone's audio was routed to a Bluetooth headset (`EPOS IMPACT 1060T ANC`) during this
   recording; that adds 150–300 ms when the drum is on.
 
+## 2026-11-25: Eager trigger on a packet's last sample (replay of the 200 Hz recordings)
+
+Replayed the two 200 Hz recordings (25 stomps) and looked at the packet before each stomp's
+trigger. Feature as a fraction of the detector's threshold:
+
+```
+last sample of the packet before the trigger, stomps that then fired in the next packet's frame 1:
+  0.98 (waited 16 ms), 0.95 (2 ms), 1.00 just under (78 ms), 0.79 (74 ms), 0.70 (48 ms)
+largest sample in quiet packets (not within 3 packets of a stomp): 0.56 and 0.74 (p99 0.42, 0.67)
+replayed stomp counts, eagerRatio 0 / 0.7 / 0.8: 14 / 14 / 14 and 11 / 12 / 11
+```
+
+- **Change:** `eagerRatio` (Tune & debug, "Eager" slider; 0 = off, the default). At the end of
+  each Bluetooth notification, if the last sample is over eagerRatio × threshold, fire on it now
+  rather than wait up to ~80 ms for the next packet. Bluetooth only. The status shows how many
+  fired early. Replay applies it too (packets are inferred from shared arrival times).
+- **At 0.8:** 3 of 25 stomps fire one packet sooner (2, 16 and 78 ms), with no extra triggers in
+  these recordings. At 0.7, 5 of 25, but one extra trigger already shows. The 50 Hz recording
+  is unchanged down to 0.6.
+- **Not checked:** walking, weight shifts and foot tapping. The quiet packets here were standing
+  still between stomps, so false triggers while moving are unknown.
+
 ## 2026-11-25: Wired sensor option (USB cable to a second phone)
 
 Plan: an old phone reads the sensor over its USB-C cable and plays the drum through its own audio
@@ -428,8 +450,9 @@ jack, which avoids the Bluetooth packing entirely.
 - **Phone audio output (~100 ms on both speaker and USB-C):** solved for USB-C: AAudio exclusive
   measures 23 ms by mic (~103 ms with AudioTrack). Otherwise a separate box (Raspberry Pi or Teensy reading the sensor over USB) avoids
   both the phone's audio delay and the Bluetooth batching.
-- **First-burst detection:** mostly done at 0.5 g (20 of 25 stomps). Fire on a lone last-frame
-  jolt too? Needs recordings of walking and weight shifts to check false triggers.
+- **First-burst detection:** mostly done at 0.5 g (20 of 25 stomps). The eager trigger (0.8)
+  catches 3 more in replay; needs a try by foot and recordings of walking and weight shifts to
+  check false triggers.
 - **Stalls:** what does the `stalls:` line show when one happens? Build #34 showed 52 reconnects
   in one session: why?
 - **Custom firmware:** the WT901BLECL datasheet names one nRF52832 as the Bluetooth chip, with an

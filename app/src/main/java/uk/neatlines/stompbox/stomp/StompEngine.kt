@@ -39,7 +39,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
     private val prefs = context.getSharedPreferences("stomp", Context.MODE_PRIVATE)
 
     val pipeline = StompPipeline(loadConfig(loadMode()), loadPlacement(), loadRate()) { e, at -> onStomp(e, at) }
-    val ble = WitBleSource(context, pipeline.rateHz, onSample = ::onSample)
+    val ble = WitBleSource(context, pipeline.rateHz, onSample = ::onSample, onPacketEnd = pipeline::onPacketEnd)
     val usb = WitUsbSource(context, pipeline.rateHz, onSample = ::onSample).apply { onOpened = pipeline::restartClock }
 
     /**

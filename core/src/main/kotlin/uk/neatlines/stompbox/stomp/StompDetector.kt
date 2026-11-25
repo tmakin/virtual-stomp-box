@@ -65,6 +65,15 @@ class StompDetector(
     private val history = ArrayDeque<Pair<Double, Double>>()   // (roll, pitch) for orientation lag
 
     var triggers = 0; private set
+    /** Stomps fired by [onPacketEnd] rather than by crossing the full threshold. */
+    var eagerTriggers = 0; private set
+
+    // The latest sample, for [onPacketEnd].
+    private var lastFeature = 0.0
+    private var lastThreshold = 1.0
+    private var lastTilt = 0.0
+    private var lastSampleNanos = 0L
+    private var lastArrivalNanos = 0L
 
     fun onSample(s: WitSample, sampleNanos: Long, arrivalNanos: Long) {
         index++
@@ -102,6 +111,9 @@ class StompDetector(
         if (!armed && msSinceTrigger >= c.deadTimeMs && feature < c.releaseRatio * threshold) armed = true
         if (armed) noise += (feature - noise) * (1 - exp(-dtMs / 1000.0))   // ~1 s time constant
 
+        lastFeature = feature; lastThreshold = threshold; lastTilt = tilt
+        lastSampleNanos = sampleNanos; lastArrivalNanos = arrivalNanos
+
         var triggered = false
         val pend = pending
         if (pend != null) {
@@ -110,12 +122,31 @@ class StompDetector(
             if (--pendingLeft <= 0) { pending = null; emit(better.copy(velocity = velocity(better.peak, threshold, c))) }
             else pending = better
         } else if (armed && feature > threshold && msSinceGyro <= c.gyroGateMs) {
-            armed = false; msSinceTrigger = 0.0; triggered = true; triggers++
-            val zone = zone(tilt, c, p)
-            val ev = StompEvent(index, sampleNanos, arrivalNanos, velocity(feature, threshold, c), zone, c.note(zone), feature, tilt)
-            if (c.peakWaitSamples > 0) { pending = ev; pendingLeft = c.peakWaitSamples } else emit(ev)
+            triggered = true
+            trigger(feature, threshold, tilt, sampleNanos, arrivalNanos, c)
         }
         onDebug?.invoke(DebugFrame(index, sampleNanos, feature, threshold, vertical, jerk, tilt, gyro, armed, triggered))
+    }
+
+    /**
+     * Call after the last sample of each Bluetooth notification. The sensor packs samples, so the
+     * next one may be ~80 ms away: a jolt in the last sample that is already over
+     * [StompConfig.eagerRatio] × threshold fires now instead of waiting for the next packet.
+     * Not for the USB link, where the next sample is only 5 ms away.
+     */
+    fun onPacketEnd() {
+        val c = config
+        if (c.eagerRatio <= 0 || !armed || pending != null || msSinceGyro > c.gyroGateMs) return
+        if (lastFeature <= c.eagerRatio * lastThreshold) return
+        eagerTriggers++
+        trigger(lastFeature, lastThreshold, lastTilt, lastSampleNanos, lastArrivalNanos, c)
+    }
+
+    private fun trigger(feature: Double, threshold: Double, tilt: Double, sampleNanos: Long, arrivalNanos: Long, c: StompConfig) {
+        armed = false; msSinceTrigger = 0.0; triggers++
+        val zone = zone(tilt, c, placement)
+        val ev = StompEvent(index, sampleNanos, arrivalNanos, velocity(feature, threshold, c), zone, c.note(zone), feature, tilt)
+        if (c.peakWaitSamples > 0) { pending = ev; pendingLeft = c.peakWaitSamples } else emit(ev)
     }
 
     private fun emit(e: StompEvent) = onStomp(e)

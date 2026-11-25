@@ -119,6 +119,8 @@ At every sample (200 Hz):
 5. **Velocity** (1–127) comes from how far the peak exceeds the threshold, scaled to
    `velocityFullScaleG` with a `velocityCurve`. `peakWaitSamples` waits 0–3 samples for the true
    peak, which gives better dynamics at 5 ms per sample.
+   `eagerRatio` (off by default, Bluetooth only) fires on the last sample of a notification once
+   it passes that fraction of the threshold, because the next sample may be ~80 ms away.
 6. **Zone** comes from the tilt at impact, measured about the calibrated axis. Toes up by at least
    `heelTiltDeg` is **HEEL**; toes down by at least `toeTiltDeg` is **TOE**; anything else is
    FLAT. Each zone has its own note (default: heel and flat = 36 kick, toe = 38 snare).

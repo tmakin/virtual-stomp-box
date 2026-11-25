@@ -100,9 +100,15 @@ private fun run(log: StompLog, config: StompConfig, rate: Int, framesOut: String
             d.tiltDeg, d.gyroDps, if (d.armed) 1 else 0, if (d.triggered) 1 else 0))
     }
     var seen = 0
-    for ((t, s) in log.samples) {
+    // Samples from one notification share an arrival time, so a packet ends where the time changes.
+    // A Bluetooth log only: over USB every read would count as a packet.
+    val packets = log.info["link"] != "USB_cable"
+    val samples = log.samples
+    for ((k, sample) in samples.withIndex()) {
+        val (t, s) = sample
         arrival = t
         pipeline.onSample(s, t)
+        if (packets && (k + 1 == samples.size || samples[k + 1].first != t)) pipeline.onPacketEnd()
         while (seen < events.size) { steadyFire += steadyTiming.fireAtNanos(events[seen].first, steadyCfg, t); seen++ }
     }
     frames?.close()
