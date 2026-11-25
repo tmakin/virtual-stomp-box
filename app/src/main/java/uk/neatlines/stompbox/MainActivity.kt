@@ -26,7 +26,6 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var big: TextView
     private lateinit var connect: Button
-    private var connected = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,17 +58,21 @@ class MainActivity : Activity() {
         app.engine.onStompUi = { e -> runOnUiThread { show(e) } }
     }
 
-    override fun onResume() { super.onResume(); status.post(refresh) }
+    override fun onResume() { super.onResume(); showConnected(); status.post(refresh) }
     override fun onPause() { super.onPause(); status.removeCallbacks(refresh) }
 
     private fun toggleConnect() {
-        if (connected) { app.engine.stop(); connected = false; connect.text = "Connect sensor"; return }
+        // The engine outlives this screen, so ask it rather than keeping a flag that a recreated
+        // activity would lose (and then start a second connection).
+        if (app.engine.isRunning) { app.engine.stop(); showConnected(); return }
         val needed = arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
             .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
         if (needed.isNotEmpty()) { requestPermissions(needed.toTypedArray(), 1); return }
         app.engine.start()
-        connected = true; connect.text = "Disconnect"
+        showConnected()
     }
+
+    private fun showConnected() { connect.text = if (app.engine.isRunning) "Disconnect" else "Connect sensor" }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, results)

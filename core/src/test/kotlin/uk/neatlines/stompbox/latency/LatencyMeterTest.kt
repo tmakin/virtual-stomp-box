@@ -90,4 +90,33 @@ class LatencyMeterTest {
         assertEquals(2.0, r.maxJoltG!!, 0.01)
         assertEquals(450.0, r.detectMs, 0.01)
     }
+
+    @Test fun fastRhythmWithSoundOff() {
+        // Impacts heard, no drum: each next impact must not be taken for this stomp's drum.
+        val m = LatencyMeter()
+        for (k in 0 until 6) {
+            val t = 10_000 * ms + k * 500 * ms
+            m.onset(t)
+            m.stomp(t + 50 * ms, t + 50 * ms)
+        }
+        val r = m.poll(20_000 * ms)
+        assertEquals(6, r.size)
+        assertEquals(0, m.unpaired)
+        r.forEach { assertEquals(50.0, it.detectMs, 0.01); assertNull(it.outputMs) }
+    }
+
+    @Test fun oneMissedDrumInFastRhythm() {
+        // Sound on, but the mic misses the third drum: only that stomp loses its output figure.
+        val m = LatencyMeter()
+        for (k in 0 until 6) {
+            val t = 10_000 * ms + k * 500 * ms
+            m.onset(t)
+            m.stomp(t + 50 * ms, t + 50 * ms)
+            if (k != 2) m.onset(t + 150 * ms)
+        }
+        val r = m.poll(20_000 * ms)
+        assertEquals(6, r.size)
+        r.forEach { assertEquals(50.0, it.detectMs, 0.01) }
+        assertEquals(listOf(100.0, 100.0, null, 100.0, 100.0, 100.0), r.map { it.outputMs })
+    }
 }

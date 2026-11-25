@@ -120,6 +120,23 @@ lowest-latency settings.
 - **Settings:** a saved threshold over 2.0 g is capped on load; a saved rate no longer offered
   falls back to 200 Hz.
 
+## 2026-11-25: Review fixes (BLE writes, one connection, latency pairing)
+
+Found in code review; not yet tried on hardware.
+
+- **Refused BLE writes are retried**, not dropped: back to the front of the queue, every 50 ms for
+  up to ~1 s. A dropped UNLOCK or SAVE could leave the sensor half-configured. A reply that comes
+  after its write timed out, or from an old connection, is ignored (it used to cancel the next
+  write's timeout). `failed writes` now counts only timeouts and writes finally given up.
+- **One connection at a time:** the scan connects to the first result only; `start()` does nothing
+  while running; the Connect button asks the engine, so a recreated home screen (dark-mode switch,
+  font size, split screen) can't start a second connection. Callbacks and timers from a replaced
+  connection are ignored.
+- **Latency meter, no drum heard:** the next stomp's impact was taken for this stomp's drum, so the
+  next stomp went unpaired (sound off, fast stomping: 1 of 6 measured). Between play() and the
+  next detection, two sounds are now drum then impact; a lone sound is whichever it's nearer.
+  Unit-tested. The 2 s pacer hid this in the tests so far.
+
 ## Open questions
 
 - **USB-C into an amp:** how much of the 100 ms output goes? Then AAudio/Oboe exclusive mode, if
