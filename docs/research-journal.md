@@ -320,6 +320,25 @@ notification later (2-78 ms)
   for the next one. Firing on that one sample saves one notification on about 1 stomp in 5, but
   risks false triggers. Checking that needs recordings of non-stomp movement.
 
+## 2026-11-25: STEADY delay for the batched link
+
+Feedback: the uneven timing makes it hard to play music with.
+
+Detected sample → arrival in the two USB-C recordings (25 stomps, IMMEDIATE): 12–97 ms, median 38 ms.
+With STEADY, a stomp later than the steady delay plays on arrival, so it jitters again:
+
+```
+steady delay  60 ms: 7 of 25 late
+steady delay  80 ms: 2 of 25 late
+steady delay 100 ms: 0 of 25 late
+```
+
+- **Change:** the steady delay slider now goes to 150 ms (was 60), and the default is 100 ms
+  (was 25, chosen for a link that sends one frame per notification).
+- **Expected at 100 ms:** a constant ~150 ms from impact to drum (the detected sample is ~30 ms
+  after the impact by mic, plus 100 ms, plus 23 ms output), against 80–180 ms with IMMEDIATE.
+  Not yet tried by ear.
+
 ## Open questions
 
 - **Phone audio output (~100 ms on both speaker and USB-C):** solved for USB-C: AAudio exclusive

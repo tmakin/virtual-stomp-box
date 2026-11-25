@@ -146,7 +146,7 @@ class StompTuningActivity : Activity() {
         slider(col, "Velocity full scale", "g", 1.0, 16.0, 0.5, { it.velocityFullScaleG }) { c, v -> c.copy(velocityFullScaleG = v) }
         slider(col, "Velocity curve", "", 0.2, 2.0, 0.05, { it.velocityCurve }) { c, v -> c.copy(velocityCurve = v) }
         slider(col, "Gyro gate (0 = off)", "°/s", 0.0, 400.0, 10.0, { it.gyroGateDps }) { c, v -> c.copy(gyroGateDps = v) }
-        slider(col, "Steady delay", "ms", 10.0, 60.0, 1.0, { it.steadyDelayMs }) { c, v -> c.copy(steadyDelayMs = v) }
+        slider(col, "Steady delay", "ms", 10.0, 150.0, 1.0, { it.steadyDelayMs }) { c, v -> c.copy(steadyDelayMs = v) }
         col.addView(button("Reset this mode to defaults") { set { StompConfig.forMode(it.mode) } })
 
         setContentView(ScrollView(this).apply { addView(col); padForSystemBars(24); clipToPadding = false })

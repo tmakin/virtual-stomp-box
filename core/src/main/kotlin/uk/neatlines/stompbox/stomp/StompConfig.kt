@@ -40,7 +40,7 @@ data class StompConfig(
     val toeTiltDeg: Double = 8.0,        // toes down at least this much → TOE
     val orientationLagSamples: Int = 2,  // read orientation from before the impact disturbed it
     val timing: Timing = Timing.IMMEDIATE,
-    val steadyDelayMs: Double = 25.0,
+    val steadyDelayMs: Double = 100.0,
     val noteFlat: Int = 36, val noteHeel: Int = 36, val noteToe: Int = 38,
 ) {
     fun note(zone: Zone) = when (zone) { Zone.FLAT -> noteFlat; Zone.HEEL -> noteHeel; Zone.TOE -> noteToe }

@@ -43,8 +43,11 @@ fusion, UART to the BLE chip) is assumed to be about 3.5 ms. Audio output latenc
 
 **STEADY** timing plays each stomp at a fixed delay after the *estimated impact time*.
 `SampleClock` rebuilds each sample's measurement time from the steady 200 Hz rate, so the BLE
-jitter drops out. What remains is the 5 ms sample period (±2.3 ms). The cost is a constant
-delay of about 20–25 ms. **IMMEDIATE** is about 10 ms quicker but jitters by a whole connection
+jitter drops out. What remains is the 5 ms sample period (±2.3 ms). The delay must cover the
+worst link delay or late stomps play on arrival and jitter again. The model above assumed one
+frame per notification (20–25 ms). The real WT901 batches 8 frames and sometimes sends
+notifications in pairs, so detected sample → arrival reaches ~97 ms: the default is now 100 ms
+(slider up to 150). **IMMEDIATE** is about 10 ms quicker but jitters by a whole connection
 interval.
 
 **Neither mode meets the original ≤10 ms target with this sensor.** Both modes are a toggle on
