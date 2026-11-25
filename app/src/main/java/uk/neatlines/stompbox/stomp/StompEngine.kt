@@ -170,6 +170,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
             "rateHz" to "$rateHz", "rateReg" to "${source.rateRegister}", "bandwidthReg" to "${source.bandwidthRegister}",
             "batteryV" to "${source.batteryVolts}", "device" to (source.deviceName ?: "?"),
             "phone" to "${Build.MANUFACTURER} ${Build.MODEL}", "android" to "${Build.VERSION.SDK_INT}",
+            "audio" to ((output as? uk.neatlines.stompbox.audio.DrumSynth)?.summary() ?: "?"),
         ))
         val micAllowed = context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED

@@ -254,6 +254,25 @@ detect: only 1 of 14 impacts heard by the mic (63 ms; total 167 ms)
 - **First result:** exclusive is granted on the USB-C to 3.5 mm adapter (`KM_B2 AUX`), not only on
   the speaker. The latency test with the mic hasn't been run yet.
 
+## 2026-11-25: Recording with the mic on, USB-C adapter (`stomp-20261125-093609`)
+
+11 stomps in 12.8 s, 200 Hz, 8 frames in every notification. The log doesn't say which audio
+engine was on (fixed below).
+
+```
+sensor: 199.2 Hz, 8 frames in every notification, gap median 42.8 ms, p95 79.7 ms, max 93 ms
+mic onsets: 3, all impacts (none of the drum sounds)
+detect (impact heard -> drum fired): 116, 54, 63 ms
+detected sample -> fired: 12-97 ms, median 37 ms
+```
+
+- **No output figure:** the mic heard none of the drums through the amp, so output latency can't
+  be read from this file. Use the latency test, or put the phone's mic by the amp's speaker.
+- **Notifications often come in pairs:** gaps alternate ~78 ms and ~4 ms, so 16 frames land at
+  once. This is the p95 of ~80 ms seen in every recording, and why the detect time swings
+  (54-116 ms): an impact that just misses a notification waits up to ~80 ms.
+- **Change:** recordings now log the audio engine line (`audio=` in `# info`).
+
 ## Open questions
 
 - **Phone audio output (~100 ms on both speaker and USB-C):** how much does the AAudio exclusive
