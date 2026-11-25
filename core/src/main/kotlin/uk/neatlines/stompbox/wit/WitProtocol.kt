@@ -25,6 +25,8 @@ object Wit {
     const val REG_QUAT = 0x51
     const val REG_TEMP = 0x40
     const val REG_BATTERY = 0x64
+    /** Firmware version: the reply starting here carries 0x2E and 0x2F (encoding unknown). */
+    const val REG_VERSION = 0x2E
     const val REG_UNLOCK = 0x69
 
     /** Return-rate register values, from the SDK's SetRRate / Unity SetReturnRate(0x0b) = 200 Hz. */

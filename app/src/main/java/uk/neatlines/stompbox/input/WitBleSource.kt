@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import uk.neatlines.stompbox.debug.GapCounter
+import uk.neatlines.stompbox.debug.GattInfo
 import uk.neatlines.stompbox.wit.Wit
 import uk.neatlines.stompbox.wit.WitPacketParser
 import uk.neatlines.stompbox.wit.WitSample
@@ -55,6 +56,12 @@ class WitBleSource(
     @Volatile var bandwidthRegister: Int = -1; private set
     @Volatile var deviceName: String? = null; private set
     @Volatile var mtu = 23; private set
+    /** The sensor's GATT services and characteristics, and any firmware-update services among them. */
+    @Volatile var gattServices: String = "?"; private set
+    @Volatile var updateServices: List<String> = emptyList(); private set
+    /** Device Information strings (firmware revision etc.) and the raw 0x2E/0x2F version registers. */
+    @Volatile var deviceInfo: String = ""; private set
+    @Volatile var versionRegisters: String = "?"; private set
     /** Connection parameters as last reported by the stack (hidden callback; -1 until reported). */
     @Volatile var connIntervalMs: Double = -1.0; private set
     @Volatile var connLatency: Int = -1; private set
@@ -176,6 +183,11 @@ class WitBleSource(
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, st: Int) { this@WitBleSource.mtu = mtu; g.discoverServices() }
 
         override fun onServicesDiscovered(g: BluetoothGatt, st: Int) {
+            gattServices = GattInfo.describe(g.services.map { s -> s.uuid to s.characteristics.map { it.uuid } })
+            updateServices = GattInfo.updateServices(g.services.map { it.uuid })
+            Log.i(TAG, "GATT: $gattServices")
+            infoToRead = g.getService(GattInfo.DEVICE_INFO)?.characteristics
+                ?.filter { it.uuid in GattInfo.DEVICE_INFO_STRINGS }.orEmpty()
             val svc = g.getService(Wit.SERVICE) ?: return setStatus("not a WT901 (no FFE5 service)")
             val notify = svc.getCharacteristic(Wit.NOTIFY)
             write = svc.getCharacteristic(Wit.WRITE)
@@ -189,6 +201,9 @@ class WitBleSource(
             if (g !== gatt) return
             setStatus("streaming")
             handler.post {
+                deviceInfo = ""
+                infoToRead.forEach { writes.addLast(Write(ByteArray(0), 0, false, read = it)) }
+                enqueue(Wit.readRegister(Wit.REG_VERSION))
                 enqueue(Wit.readRegister(Wit.REG_RATE))
                 enqueue(Wit.readRegister(Wit.REG_BANDWIDTH))
                 enqueue(Wit.readRegister(Wit.REG_BATTERY))
@@ -198,7 +213,19 @@ class WitBleSource(
             handler.postDelayed(ping, 3000)
         }
 
-        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, st: Int) {
+        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, st: Int) = completed(g, st)
+
+        override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, st: Int) {
+            val name = GattInfo.DEVICE_INFO_STRINGS[c.uuid]
+            if (g === gatt && name != null && st == BluetoothGatt.GATT_SUCCESS) {
+                val text = String(value, Charsets.UTF_8).trim { it <= ' ' }
+                deviceInfo = listOf(deviceInfo, "$name \"$text\"").filter { it.isNotEmpty() }.joinToString(", ")
+            }
+            completed(g, st)
+        }
+
+        /** A queued write or read got its reply: release the queue for the next one. */
+        private fun completed(g: BluetoothGatt, st: Int) {
             handler.post {
                 // Ignore a reply from an old connection, or one that comes after its write timed out:
                 // it must not cancel the timeout of the write now in flight or release the queue early.
@@ -247,6 +274,7 @@ class WitBleSource(
             Wit.REG_RATE -> rateRegister = v[0].toInt()
             Wit.REG_BANDWIDTH -> bandwidthRegister = v[0].toInt()
             Wit.REG_BATTERY -> batteryVolts = v[0] / 100.0
+            Wit.REG_VERSION -> versionRegisters = "0x2E = 0x%04X, 0x2F = 0x%04X".format(v[0].toInt() and 0xFFFF, v[1].toInt() and 0xFFFF)
         }
     }
 
@@ -263,7 +291,10 @@ class WitBleSource(
 
     // ---- write queue (handler thread only) ---------------------------------------------------
 
-    private class Write(val cmd: ByteArray, val gapMs: Long, val isPing: Boolean) { var tries = 0 }
+    /** A command to write, or (with [read]) a characteristic to read; both go through one queue. */
+    private class Write(val cmd: ByteArray, val gapMs: Long, val isPing: Boolean, val read: BluetoothGattCharacteristic? = null) { var tries = 0 }
+    /** Device Information characteristics to read once streaming starts. */
+    private var infoToRead: List<BluetoothGattCharacteristic> = emptyList()
     private val writes = ArrayDeque<Write>()
     /** A write is scheduled or in flight; the next one waits. */
     private var writeBusy = false
@@ -286,7 +317,8 @@ class WitBleSource(
             val g = gatt; val c = write
             if (g == null || c == null) { resetWrites(); return@postDelayed }
             if (w.isPing) pingSentAt = System.nanoTime()
-            val rc = g.writeCharacteristic(c, w.cmd, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+            val rc = if (w.read != null) { if (g.readCharacteristic(w.read)) BluetoothStatusCodes.SUCCESS else -1 }
+                else g.writeCharacteristic(c, w.cmd, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
             if (rc == BluetoothStatusCodes.SUCCESS) {
                 inFlight = w
                 handler.postDelayed(writeTimeout, 1000)
@@ -294,7 +326,7 @@ class WitBleSource(
                 // Usually "busy": the stack still waits on an earlier write (e.g. one that timed out
                 // here). Put it back at the front and retry, so a setup command is never skipped.
                 writeBusy = false
-                if (++w.tries < MAX_TRIES) writes.addFirst(Write(w.cmd, 0, w.isPing).also { it.tries = w.tries })
+                if (++w.tries < MAX_TRIES) writes.addFirst(Write(w.cmd, 0, w.isPing, w.read).also { it.tries = w.tries })
                 else { failedWrites++; Log.w(TAG, "write dropped after $MAX_TRIES tries (rc $rc)") }
                 handler.postDelayed({ pump() }, RETRY_MS)
             }
