@@ -20,8 +20,9 @@ stomps 2 s apart, phone speaker (build #13):
 
 What we know about the sensor and link:
 
-- **The sensor packs frames on its own ~44 ms timer:** about 8 frames per notification at 200 Hz
-  (about 5 at 100 Hz, 3 at 50 Hz), one notification every ~44 ms. This sets the ~55 ms and can't be
+- **The sensor packs frames on its own ~44 ms timer:** 8 frames per notification at 200 Hz,
+  2 at 50 Hz (2026-11-25 recording; the older "5 at 100 Hz" wasn't kept as raw data), one notification
+  every ~44 ms on average, often as a pair (~80 ms gap, then ~1 ms). This sets the ~55 ms and can't be
   changed from the phone. Other users see the same (~40 ms, 4 frames at 100 Hz). WitMotion's SDK
   and protocol notes have no register for it: only rate (0x03), filter bandwidth (0x1F), output
   content (0x96), algorithm (0x24) and orientation (0x23). Below 50 Hz frames come one per
@@ -375,6 +376,31 @@ registers we saw in the dump:
   assuming it's a simple constant. Possible but slow.
 - **Prior work:** no reverse-engineering write-up for the BWT901BLE5.0 found.
 - **So:** the realistic routes are still asking WitMotion and running the GATT listing.
+
+## 2026-11-25: 50 Hz over Bluetooth (`stomp-20261125-234256`)
+
+Question: does 50 Hz send each reading on its own (below ~50 Hz frames come one per
+notification), which would cut the wait inside the sensor? 11 stomps, IMMEDIATE, mic on, sound
+off. Compared with the two 200 Hz recordings of the same day:
+
+```
+                                   50 Hz                     200 Hz
+frames per notification            2 (all 387)               8 (all)
+notification gap                   median 44, p5 0.7, p95 78 median 42, p5 1.1, p95 78-80 ms
+impact (mic) → detected, arrival   median 61, 37-101 (n=10)  median 63, 54-116 (n=4)
+```
+
+- **No:** 50 Hz still batches (2 frames per notification) and keeps the same pairs: ~80 ms, then
+  a second notification ~1 ms later. A reading can wait up to ~80 ms at either rate.
+- **Impact → detection is the same** (61 against 63 ms median; few 200 Hz stomps had a mic onset).
+  At 50 Hz every stomp fired on the first notification with a jolt over 0.5 g.
+- **The sample clock is off at 50 Hz:** it puts the detected sample 8–22 ms *before* the impact,
+  so the "detected sample → arrival" figure (78 ms) is too high. It assumes some frames arrive
+  with almost no delay, which batches of 20 ms frames don't give. STEADY timing would be off by
+  as much at 50 Hz.
+- **Decision:** stay at 200 Hz. Same delay, finer impact timing and velocity.
+- The phone's audio was routed to a Bluetooth headset (`EPOS IMPACT 1060T ANC`) during this
+  recording; that adds 150–300 ms when the drum is on.
 
 ## 2026-11-25: Wired sensor option (USB cable to a second phone)
 
