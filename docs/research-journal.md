@@ -22,7 +22,10 @@ What we know about the sensor and link:
 
 - **The sensor packs frames on its own ~44 ms timer:** about 8 frames per notification at 200 Hz
   (about 5 at 100 Hz, 3 at 50 Hz), one notification every ~44 ms. This sets the ~55 ms and can't be
-  changed from the phone.
+  changed from the phone. Other users see the same (~40 ms, 4 frames at 100 Hz). WitMotion's SDK
+  and protocol notes have no register for it: only rate (0x03), filter bandwidth (0x1F), output
+  content (0x96), algorithm (0x24) and orientation (0x23). Below 50 Hz frames come one per
+  notification, but no faster than 1 / rate (50 ms at 20 Hz), so that doesn't help either.
 - **The link is not the limit:** every frame arrives; Android reports a 15 ms connection interval
   with peripheral latency 1. Re-requesting connection priority changes nothing.
 - **Android 14+ negotiates a large MTU on connect**, so the app can't keep the 23-byte default
@@ -124,5 +127,7 @@ lowest-latency settings.
 - **First-burst detection:** can the detector fire on the first burst (cut ~30 ms)? Needs a
   recording with the mic around real stomps.
 - **Stalls:** what does the `stalls:` line show when one happens?
+- **Custom firmware:** ask WitMotion whether the packing timer can be shortened (they sell
+  customisation); nothing public covers it.
 - **A faster sensor:** the WT901's ~44 ms packing is the floor for this sensor. On-sensor detection
   over BLE (the XIAO firmware) should give ~10–15 ms sensor → phone; see issue #4.
