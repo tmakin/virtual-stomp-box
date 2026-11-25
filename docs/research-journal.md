@@ -228,10 +228,30 @@ searched, nothing run):
   cable only reaches the register protocol, and reading flash needs SWD, which production nRF52s
   usually lock.
 
+## 2026-11-25: USB-C to 3.5 mm adapter (build #24 `422448d`)
+
+The Pixel's audio went through a USB-C to 3.5 mm adapter (`USB-Audio - KM_B2 AUX`) into an amp.
+Recording with the mic, 14 stomps:
+
+```
+audio: USB audio 'USB-Audio - KM_B2 AUX', buffer 10.0 ms, output latency 69 ms, fast path yes, underruns 0
+sensor: 199.7 Hz, 8 frames in every notification, gap median 41.9 ms, p95 78.2 ms
+output (drum fired -> heard): median ~103 ms, range 98-113 ms (14 of 14)
+detect: only 1 of 14 impacts heard by the mic (63 ms; total 167 ms)
+```
+
+- **The USB-C adapter is no faster than the speaker:** ~103 ms by mic against 100 ms on the
+  speaker, though Android reports 69 ms (79 ms on the speaker). Android's audio path on this phone
+  sets the floor, not the speaker.
+- **Bluetooth batching unchanged:** 8 frames per notification, ~42 ms apart.
+- **The mic missed most impacts:** put the phone nearer the foot to measure detect.
+
 ## Open questions
 
-- **USB-C into an amp:** how much of the 100 ms output goes? Then AAudio/Oboe exclusive mode, if
-  worth it (it may not be available on USB).
+- **Phone audio output (~100 ms on both speaker and USB-C):** try AAudio/Oboe in exclusive (MMAP)
+  mode on the built-in speaker. Pixels support it there (not on USB), and it skips Android's
+  mixer. Otherwise a separate box (Raspberry Pi or Teensy reading the sensor over USB) avoids
+  both the phone's audio delay and the Bluetooth batching.
 - **First-burst detection:** can the detector fire on the first burst (cut ~30 ms)? Needs a
   recording with the mic around real stomps.
 - **Stalls:** what does the `stalls:` line show when one happens?
