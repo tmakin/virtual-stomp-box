@@ -154,6 +154,8 @@ Found in code review; not yet tried on hardware.
     firmware on worse hardware, so not worth it.
   - **Cheap test first:** read the USB-C wired output from the phone. If its frames come one at a
     time, that confirms the ~44 ms packing is only on the Bluetooth side and shows the delay
-    custom firmware could save.
+    custom firmware could save. `tools/wit_usb_probe.py` does this from a Mac or PC (and reads the
+    firmware version). WitMotion's update tool is Windows-only; nRF Connect on the phone shows
+    whether the sensor has a Bluetooth update service.
 - **A faster sensor:** the WT901's ~44 ms packing is the floor for this sensor. On-sensor detection
   over BLE (the XIAO firmware, PR #5) should give ~10–15 ms sensor → phone; see issue #4.
