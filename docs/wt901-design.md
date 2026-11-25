@@ -38,7 +38,7 @@ choose between low delay and low jitter. The figures below are modeled, not meas
 | STEADY, 20 ms delay, 11.25 ms interval | 26.0 ms | 28.3 ms | ±2.3 ms | yes |
 | STEADY, 25 ms delay, 15 ms interval | 31.0 ms | 33.3 ms | ±2.3 ms | yes |
 
-The figures come from `python3 tools/ble_latency_model.py`. The WT901's internal delay (filter,
+The figures come from `uv run tools/ble_latency_model.py`. The WT901's internal delay (filter,
 fusion, UART to the BLE chip) is assumed to be about 3.5 ms. Audio output latency comes on top.
 
 **STEADY** timing plays each stomp at a fixed delay after the *estimated impact time*.
@@ -171,7 +171,7 @@ mode keeps its own tuning.
 ./gradlew :core:run --args="$PWD/stomp-log.csv"                                 # reproduce the live run
 ./gradlew :core:run --args="$PWD/stomp-log.csv feature=JERK minThresholdG=0.9"  # try other settings
 ./gradlew :core:run --args="$PWD/stomp-log.csv --sweep minThresholdG=0.6:2.0:0.2"
-./gradlew :core:run --args="$PWD/stomp-log.csv --frames $PWD/frames.csv" && python3 tools/plot_stomp_frames.py frames.csv
+./gradlew :core:run --args="$PWD/stomp-log.csv --frames $PWD/frames.csv" && uv run tools/plot_stomp_frames.py frames.csv
 ```
 
 The tool reports:

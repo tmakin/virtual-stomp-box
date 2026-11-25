@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["pyserial"]
+# ///
 """Read the WT901 over its USB-C cable and show whether its frames come one at a time or in
 bursts, plus its firmware version. Works on macOS (and Linux / Windows).
 
@@ -6,10 +10,9 @@ Over Bluetooth the sensor sends ~8 frames every ~44 ms at 200 Hz. If the cable d
 at a time (~5 ms apart), the bursts are made only on the Bluetooth side, so a firmware change
 there could save ~40 ms.
 
-    pip3 install pyserial
-    python3 tools/wit_usb_probe.py              # finds the port, sets 200 Hz (not saved), reads 10 s
-    python3 tools/wit_usb_probe.py --port /dev/cu.usbserial-1410 --seconds 20 --rate 100
-    python3 tools/wit_usb_probe.py --no-rate    # leave the rate as it is
+    uv run tools/wit_usb_probe.py              # finds the port, sets 200 Hz (not saved), reads 10 s
+    uv run tools/wit_usb_probe.py --port /dev/cu.usbserial-1410 --seconds 20 --rate 100
+    uv run tools/wit_usb_probe.py --no-rate    # leave the rate as it is
 
 Turn the sensor on and plug it in with a data cable. macOS has a built-in driver for the CH340
 USB-serial chip: the port shows up as /dev/cu.usbserial-* (or /dev/cu.wchusbserial-* with WCH's

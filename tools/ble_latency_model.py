@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 """Monte Carlo model of impact -> event-in-app latency for a foot sensor.
 
 This is a MODEL, not a measurement. It exists to show which part of the delay
@@ -6,7 +10,7 @@ budget dominates (the BLE connection interval) and what to expect when the real
 test is run. Every constant below is an assumption; change them once the
 Pixel 8 numbers are measured.
 
-Usage: python3 tools/ble_latency_model.py [--n 200000] [--seed 1]
+Usage: uv run tools/ble_latency_model.py [--n 200000] [--seed 1]
 """
 import argparse
 import random

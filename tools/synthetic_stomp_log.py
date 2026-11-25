@@ -1,10 +1,14 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 """Write a fake WT901 stomp log (the phone's export format) to try the replay tool without hardware.
 
 Sensor flat on a shoe at 200 Hz, stomps every 0.5 s alternating flat / heel / toe, BLE delivery
 at an 11.25 ms connection interval, and a mic onset at each true impact.
 
-Usage: python3 tools/synthetic_stomp_log.py out.csv [--ci 11.25] [--seed 1]
+Usage: uv run tools/synthetic_stomp_log.py out.csv [--ci 11.25] [--seed 1]
 """
 import argparse, math, random
 
