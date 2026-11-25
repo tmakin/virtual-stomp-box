@@ -144,7 +144,16 @@ Found in code review; not yet tried on hardware.
 - **First-burst detection:** can the detector fire on the first burst (cut ~30 ms)? Needs a
   recording with the mic around real stomps.
 - **Stalls:** what does the `stalls:` line show when one happens?
-- **Custom firmware:** ask WitMotion whether the packing timer can be shortened (they sell
-  customisation); nothing public covers it.
+- **Custom firmware:** the WT901BLECL datasheet names one nRF52832 as the Bluetooth chip, with an
+  MPU9250 motion sensor and a fixed 115200-baud wired output on the USB-C port. Options:
+  - **Ask WitMotion** for a firmware build that sends every frame at once. They advertise OEM
+    customisation, but nothing public says whether they'd do it, or whether the sensor can be
+    updated over the air.
+  - **Reflash it ourselves:** possible over SWD after a full erase (the original firmware is lost).
+    It means writing all the firmware and tracing the board's pins: the same job as the XIAO
+    firmware on worse hardware, so not worth it.
+  - **Cheap test first:** read the USB-C wired output from the phone. If its frames come one at a
+    time, that confirms the ~44 ms packing is only on the Bluetooth side and shows the delay
+    custom firmware could save.
 - **A faster sensor:** the WT901's ~44 ms packing is the floor for this sensor. On-sensor detection
   over BLE (the XIAO firmware, PR #5) should give ~10–15 ms sensor → phone; see issue #4.
