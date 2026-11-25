@@ -26,6 +26,8 @@ What we know about the sensor and link:
   and protocol notes have no register for it: only rate (0x03), filter bandwidth (0x1F), output
   content (0x96), algorithm (0x24) and orientation (0x23). Below 50 Hz frames come one per
   notification, but no faster than 1 / rate (50 ms at 20 Hz), so that doesn't help either.
+- **The packing happens only on the Bluetooth side:** over the USB-C cable the same sensor sends
+  one frame every ~5 ms at 200 Hz (2026-11-25 test below).
 - **The link is not the limit:** every frame arrives; Android reports a 15 ms connection interval
   with peripheral latency 1. Re-requesting connection priority changes nothing.
 - **Android 14+ negotiates a large MTU on connect**, so the app can't keep the 23-byte default
@@ -136,6 +138,25 @@ Found in code review; not yet tried on hardware.
   next stomp went unpaired (sound off, fast stomping: 1 of 6 measured). Between play() and the
   next detection, two sounds are now drum then impact; a lone sound is whichever it's nearer.
   Unit-tested. The 2 s pacer hid this in the tests so far.
+
+## 2026-11-25: USB-C probe (`tools/wit_usb_probe.py`, MacBook)
+
+```
+Opened /dev/cu.usbserial-110 at 115200
+Frames seen: {'ble': 2048, 'reply': 1}
+Firmware version registers: 0x2E = 0x3337, 0x2F = 0x000A
+Samples: 2048 in 10.0 s = 204.8 Hz
+Bursts: 1987, samples per burst median 1 (max 62), gap median 5.1 ms, p95 5.3 ms
+```
+
+- **The USB-C port carries data** through a CH340 USB-serial chip (macOS's built-in driver), using
+  the same 20-byte `55 61` frames as Bluetooth. It accepts commands: the rate write and a register
+  read both worked.
+- **Frames arrive one at a time, ~5 ms apart.** The ~44 ms batching happens only on the Bluetooth
+  side, so patched firmware (or a wired connection) could save most of the ~55 ms.
+- One burst of 62 frames, probably the read loop starting late or a pause on the Mac. The 204.8 Hz
+  is measured against the Mac's clock (Bluetooth gave 199.4 Hz).
+- **Firmware version registers:** 0x2E = 0x3337, 0x2F = 0x000A. How to decode them isn't known.
 
 ## Open questions
 
