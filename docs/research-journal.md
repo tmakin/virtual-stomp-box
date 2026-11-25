@@ -15,7 +15,7 @@ stomps 2 s apart, phone speaker (build #13):
 | Part | Measured | Made of |
 |---|---|---|
 | detect: impact → detected | **86 ms** | ~55 ms until the impact shows in the data, then ~30 ms (about one more notification) until the detector fires |
-| output: play → heard | **100 ms** | AudioTrack reports 79 ms with the fast path granted; the rest is the Pixel speaker path |
+| output: play → heard | **100 ms** | AudioTrack reports 79 ms with the fast path granted; the rest is the Pixel speaker path. **Now 23 ms** with AAudio exclusive on the USB-C adapter (2026-11-25, build #34) |
 | total | **188 ms** | exact: both ends are mic times |
 
 What we know about the sensor and link:
@@ -260,10 +260,28 @@ detect: only 1 of 14 impacts heard by the mic (63 ms; total 167 ms)
   ```
 
   Android now reports 6 ms output latency against 69 ms with AudioTrack, and a 4 ms buffer with no
-  underruns. That's Android's own estimate; it still needs checking by mic.
+  underruns. That's Android's own estimate; checked by mic below.
 - **Latency test fix:** with the mic by the amp it heard only the drums, and the test dropped any
   stomp with no impact heard, output figure included. It now keeps those as a separate
   "drums heard with no impact: output median …" line.
+
+## 2026-11-25: AAudio exclusive on USB-C, measured (build #34 `99d4fd6`)
+
+Mic at the amp's speaker, USB-C to 3.5 mm adapter, AAudio exclusive:
+
+```
+audio: USB audio 'USB-Audio - KM_B2 AUX', AAudio exclusive (MMAP), buffer 4.0 ms, output latency 8 ms, underruns 0
+drums heard with no impact: output median 23 ms, range 20-27 ms (9)
+last: detect 99 ms · output 24 ms · total 123 ms
+stalls: BLE gaps 0 >250 ms (longest 185 ms), reconnects 52, failed writes 1
+```
+
+- **Output is 23 ms by mic, down from ~103 ms with AudioTrack:** about 80 ms saved. Android's
+  figure (8 ms) is ~15 ms low, against ~30 ms low with AudioTrack.
+- **The sensor link is now most of the delay:** total for the one impact heard well was 123 ms,
+  of which detect was 99 ms.
+- The "median of 2: detect 393 ms" is one mispaired stomp, not a real figure (mic far from the foot).
+- **52 reconnects** in this session, against 0 before. Cause unknown; not yet looked at.
 
 ## 2026-11-25: Recording with the mic on, USB-C adapter (`stomp-20261125-093609`)
 
@@ -286,12 +304,13 @@ detected sample -> fired: 12-97 ms, median 37 ms
 
 ## Open questions
 
-- **Phone audio output (~100 ms on both speaker and USB-C):** Android reports 6 ms with the AAudio
-  exclusive engine on the USB-C adapter (69 ms with AudioTrack); does the mic agree? Otherwise a separate box (Raspberry Pi or Teensy reading the sensor over USB) avoids
+- **Phone audio output (~100 ms on both speaker and USB-C):** solved for USB-C: AAudio exclusive
+  measures 23 ms by mic (~103 ms with AudioTrack). Otherwise a separate box (Raspberry Pi or Teensy reading the sensor over USB) avoids
   both the phone's audio delay and the Bluetooth batching.
 - **First-burst detection:** can the detector fire on the first burst (cut ~30 ms)? Needs a
   recording with the mic around real stomps.
-- **Stalls:** what does the `stalls:` line show when one happens?
+- **Stalls:** what does the `stalls:` line show when one happens? Build #34 showed 52 reconnects
+  in one session: why?
 - **Custom firmware:** the WT901BLECL datasheet names one nRF52832 as the Bluetooth chip, with an
   MPU9250 motion sensor and a fixed 115200-baud wired output on the USB-C port. Options:
   - **Ask WitMotion** for a firmware build that sends every frame at once. They advertise OEM
