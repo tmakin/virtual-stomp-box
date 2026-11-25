@@ -16,6 +16,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
+import uk.neatlines.stompbox.debug.GapCounter
 import uk.neatlines.stompbox.wit.Wit
 import uk.neatlines.stompbox.wit.WitPacketParser
 import uk.neatlines.stompbox.wit.WitSample
@@ -65,9 +66,8 @@ class WitBleSource(
     // ---- stall diagnostics: is a stall in the link (gaps, reconnects) or elsewhere?
     /** Times the link dropped and was reconnected since [start]. */
     @Volatile var reconnects = 0; private set
-    /** Gaps between notifications over [GAP_MS] while streaming, and the longest gap, ms. */
-    @Volatile var longGaps = 0; private set
-    @Volatile var longestGapMs = 0.0; private set
+    /** Gaps between notifications while streaming (normally ~44 ms; over 250 ms counts as a stall). */
+    val gaps = GapCounter(thresholdMs = 250.0)
     /** Writes Android refused or that got no reply in time. */
     @Volatile var failedWrites = 0; private set
 
@@ -87,7 +87,6 @@ class WitBleSource(
     @Volatile private var gatt: BluetoothGatt? = null
     @Volatile private var write: BluetoothGattCharacteristic? = null
     private var arrival = 0L
-    private var lastArrival = 0L
     private var scanCallback: ScanCallback? = null
     @Volatile private var stopped = true
     private val parser = WitPacketParser(
@@ -97,7 +96,7 @@ class WitBleSource(
 
     /** Connects to [address] if given, otherwise to the first device whose name starts with "WT". */
     fun start(address: String? = null) {
-        stopped = false; reconnects = 0; longGaps = 0; longestGapMs = 0.0; failedWrites = 0
+        stopped = false; reconnects = 0; gaps.reset(); failedWrites = 0
         if (address != null) { handler.post { connect(manager.adapter.getRemoteDevice(address)) }; return }
         setStatus("scanning")
         val scanner = manager.adapter.bluetoothLeScanner
@@ -118,7 +117,7 @@ class WitBleSource(
     fun stop() {
         stopped = true
         handler.removeCallbacksAndMessages(null)
-        handler.post { writes.clear(); writeBusy = false }
+        handler.post(::resetWrites)
         scanCallback?.let { runCatching { manager.adapter.bluetoothLeScanner?.stopScan(it) } }; scanCallback = null
         gatt?.disconnect(); gatt?.close(); gatt = null; write = null
         setStatus("idle")
@@ -137,7 +136,7 @@ class WitBleSource(
         override fun onConnectionStateChange(g: BluetoothGatt, st: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 setStatus("connected, setting up")
-                mtu = 23; notifications = 0; framesAtConnect = parser.frames; lastArrival = 0
+                mtu = 23; notifications = 0; framesAtConnect = parser.frames; gaps.restart()
                 connIntervalMs = -1.0; connLatency = -1; connTimeoutMs = -1
                 synchronized(pings) { pings.clear() }
                 g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
@@ -148,7 +147,7 @@ class WitBleSource(
                 handler.post {
                     // Drop every timer and queued write of the old connection, or they pile up on each reconnect.
                     handler.removeCallbacksAndMessages(null)
-                    writes.clear(); writeBusy = false
+                    resetWrites()
                     if (gatt === g) { gatt = null; write = null }
                     if (stopped) return@post
                     reconnects++
@@ -199,12 +198,7 @@ class WitBleSource(
         // Android 13+ delivers the value directly; arrival time is taken before anything else.
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
             arrival = System.nanoTime()
-            if (lastArrival != 0L) {
-                val gap = (arrival - lastArrival) / 1e6
-                if (gap > GAP_MS) longGaps++
-                if (gap > longestGapMs) longestGapMs = gap
-            }
-            lastArrival = arrival
+            gaps.mark(arrival)
             notifications++
             parser.feed(value)
         }
@@ -259,13 +253,15 @@ class WitBleSource(
         writes.addLast(Write(cmd, gapMs, isPing)); pump()
     }
 
+    private fun resetWrites() { writes.clear(); writeBusy = false }
+
     private fun pump() {
         if (writeBusy) return
         val w = writes.removeFirstOrNull() ?: return
         writeBusy = true
         handler.postDelayed({
             val g = gatt; val c = write
-            if (g == null || c == null) { writeBusy = false; writes.clear(); return@postDelayed }
+            if (g == null || c == null) { resetWrites(); return@postDelayed }
             if (w.isPing) pingSentAt = System.nanoTime()
             val rc = g.writeCharacteristic(c, w.cmd, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
             if (rc != BluetoothStatusCodes.SUCCESS) {
@@ -281,7 +277,5 @@ class WitBleSource(
 
     private companion object {
         const val TAG = "WitBle"
-        /** Notifications normally arrive every ~44 ms; a gap over this counts as a stall. */
-        const val GAP_MS = 250.0
     }
 }

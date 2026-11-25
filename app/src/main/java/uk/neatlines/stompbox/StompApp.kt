@@ -4,6 +4,7 @@ import android.app.Application
 import uk.neatlines.stompbox.audio.DrumSynth
 import uk.neatlines.stompbox.debug.StompTuningActivity
 import uk.neatlines.stompbox.stomp.StompEngine
+import uk.neatlines.stompbox.ui.UiStallWatch
 
 /** Owns the sensor engine and sound for the whole app, so they survive switching screens. */
 class StompApp : Application() {
@@ -12,6 +13,7 @@ class StompApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        UiStallWatch.install(this)
         synth = DrumSynth(this)
         engine = StompEngine(this, synth)
         StompTuningActivity.engineHolder = engine

@@ -6,6 +6,7 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioRouting
 import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.os.Handler
@@ -57,17 +58,23 @@ class DrumSynth(context: Context) : StompOutput {
     @Volatile var bufferMs = 0.0; private set
     /** Underruns (the track ran dry: an audible glitch) since the track was built. */
     @Volatile var underruns = 0; private set
-    /** "USB headset 'Foo'" or "phone speaker". */
-    @Volatile var deviceLabel = "phone speaker"; private set
+    /** Where the sound actually goes: "USB headset 'Foo'", "phone speaker". */
+    @Volatile var deviceLabel = label(null); private set
+
+    /** One line for the status screens. */
+    fun summary() = "$deviceLabel, buffer %.1f ms, output latency %.0f ms, fast path %s, underruns %d".format(
+        bufferMs, outputLatencyMs, if (lowLatencyGranted) "yes" else "NO", underruns)
 
     @Volatile private var wanted: AudioDeviceInfo? = null
     @Volatile private var rebuild = true
+    private val main = Handler(Looper.getMainLooper())
+    private val onRouted = AudioRouting.OnRoutingChangedListener { r -> deviceLabel = label(r.routedDevice) }
 
     init {
         am.registerAudioDeviceCallback(object : AudioDeviceCallback() {
             override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) = pickDevice()
             override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = pickDevice()
-        }, Handler(Looper.getMainLooper()))
+        }, main)
         pickDevice()
         Thread(::renderLoop, "drum-synth").apply { isDaemon = true; start() }
     }
@@ -98,31 +105,31 @@ class DrumSynth(context: Context) : StompOutput {
             .setBufferSizeInBytes(speakerBurst * 16 * 2 * 4)     // room to grow to 16 bursts
             .build()
         if (device != null) t.setPreferredDevice(device)
+        t.addOnRoutingChangedListener(onRouted, main)
         return t
     }
 
     private fun renderLoop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
-        val burst = speakerBurst
+        val burst = speakerBurst     // the speaker's burst also suits USB; the buffer grows if not
         val mono = FloatArray(burst)
         val stereo = FloatArray(burst * 2)
         val voices = ArrayList<Voice>()
         val ts = AudioTimestamp()
         var track: AudioTrack? = null
         var written = 0L
-        var lastUnderruns = 0
         var checks = 0
         while (true) {
-            if (rebuild || track == null) {
+            if (rebuild) {
                 rebuild = false
                 track?.let { runCatching { it.pause(); it.flush(); it.release() } }
                 val device = wanted
                 track = buildTrack(device)
                 track.setBufferSizeInFrames(burst * 2)
                 track.play()
-                written = 0; lastUnderruns = 0; underruns = 0; outputLatencyMs = Double.NaN
+                written = 0; underruns = 0; outputLatencyMs = Double.NaN
                 lowLatencyGranted = track.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY
-                deviceLabel = device?.let { "${typeName(it.type)} '${it.productName}'" } ?: "phone speaker"
+                deviceLabel = label(track.routedDevice ?: device)
             }
             val tr = track!!
             while (true) voices += pending.poll() ?: break
@@ -142,8 +149,8 @@ class DrumSynth(context: Context) : StompOutput {
             // Grow the buffer by one burst after an underrun (checked every ~10 writes).
             if (++checks % 10 == 0) {
                 val u = tr.underrunCount
-                if (u > lastUnderruns) {
-                    lastUnderruns = u; underruns = u
+                if (u > underruns) {
+                    underruns = u
                     val cap = tr.bufferCapacityInFrames
                     if (tr.bufferSizeInFrames + burst <= cap) tr.setBufferSizeInFrames(tr.bufferSizeInFrames + burst)
                 }
@@ -152,9 +159,6 @@ class DrumSynth(context: Context) : StompOutput {
                 if (tr.getTimestamp(ts)) {
                     val queued = (written - ts.framePosition) * 1e3 / rate
                     outputLatencyMs = queued - (System.nanoTime() - ts.nanoTime) / 1e6
-                }
-                tr.routedDevice?.let { d ->
-                    if (wanted == null && d.type != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) deviceLabel = "${typeName(d.type)} '${d.productName}'"
                 }
             }
         }
@@ -170,13 +174,15 @@ class DrumSynth(context: Context) : StompOutput {
             AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET,
         )
 
+        fun label(d: AudioDeviceInfo?) =
+            if (d == null || d.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) "phone speaker" else "${typeName(d.type)} '${d.productName}'"
+
         fun typeName(t: Int) = when (t) {
             AudioDeviceInfo.TYPE_USB_DEVICE -> "USB audio"
             AudioDeviceInfo.TYPE_USB_HEADSET -> "USB headset"
             AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB accessory"
             AudioDeviceInfo.TYPE_LINE_DIGITAL, AudioDeviceInfo.TYPE_LINE_ANALOG, AudioDeviceInfo.TYPE_AUX_LINE -> "line out"
             AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET -> "wired headphones"
-            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "phone speaker"
             AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth (slow!)"
             else -> "device type $t"
         }

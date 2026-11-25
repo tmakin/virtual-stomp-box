@@ -11,7 +11,11 @@ import uk.neatlines.stompbox.latency.LatencyMeter
 import uk.neatlines.stompbox.latency.LatencyProbe
 import uk.neatlines.stompbox.wit.WitSample
 import java.io.File
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.LockSupport
 
 /** What the app's sound engine has to provide. */
@@ -32,7 +36,7 @@ fun interface StompOutput {
 class StompEngine(private val context: Context, private val output: StompOutput) {
     private val prefs = context.getSharedPreferences("stomp", Context.MODE_PRIVATE)
 
-    val pipeline = StompPipeline(loadConfig(loadMode()), loadPlacement(), prefs.getInt("rateHz", 200).takeIf { it in RATES } ?: 200) { e, at -> onStomp(e, at) }
+    val pipeline = StompPipeline(loadConfig(loadMode()), loadPlacement(), loadRate()) { e, at -> onStomp(e, at) }
     val source = WitBleSource(context, pipeline.rateHz, onSample = ::onSample)
 
     /** Sensor output rate, Hz (50, 100 or 200). Lower it if the link can't carry every frame. */
@@ -67,14 +71,14 @@ class StompEngine(private val context: Context, private val output: StompOutput)
             latency.sample(arrivalNanos, kotlin.math.sqrt((dx * dx + dy * dy + dz * dz).toDouble()))
         }
         lastSample = s
-        recorder?.let { w -> recordExec?.execute { w.sample(arrivalNanos, s) } }
+        recording?.post { it.sample(arrivalNanos, s) }
         calibration?.add(s)
         pipeline.onSample(s, arrivalNanos)
     }
 
     private fun onStomp(e: StompEvent, fireAtNanos: Long) {
         if (fireAtNanos <= System.nanoTime()) output.play(e.note, e.velocity) else scheduler.schedule(fireAtNanos, e)
-        recorder?.let { w -> recordExec?.execute { w.stomp(e, fireAtNanos) } }
+        recording?.post { it.stomp(e, fireAtNanos) }
         if (latencyProbe != null) latency.stomp(e.arrivalNanos, maxOf(fireAtNanos, e.arrivalNanos))
         synchronized(recentStomps) { recentStomps.addLast(e); while (recentStomps.size > 50) recentStomps.removeFirst() }
         onStompUi?.invoke(e)
@@ -139,13 +143,21 @@ class StompEngine(private val context: Context, private val output: StompOutput)
 
     // ---- recording --------------------------------------------------------------------------
 
-    @Volatile private var recorder: StompLogWriter? = null
-    /** Formats and writes the log off the GATT thread, so disk writes can't stall the sensor path. */
-    @Volatile private var recordExec: java.util.concurrent.ExecutorService? = null
-    private var recordFile: File? = null
+    /** A log writer plus the one thread that formats and writes it, off the GATT thread. */
+    private class Recording(val writer: StompLogWriter, val file: File) {
+        private val exec: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "stomp-log") }
+        /** Queues a write; dropped if the recording has just been stopped. */
+        fun post(block: (StompLogWriter) -> Unit) {
+            try { exec.execute { block(writer) } } catch (_: RejectedExecutionException) {}
+        }
+        /** Waits (up to 2 s) for queued writes; the caller then finishes and closes [writer]. */
+        fun drain() { exec.shutdown(); exec.awaitTermination(2, TimeUnit.SECONDS) }
+    }
+
+    @Volatile private var recording: Recording? = null
     private var probe: LatencyProbe? = null
 
-    val isRecording get() = recorder != null
+    val isRecording get() = recording != null
 
     /** Records raw samples and stomps; with [withMic] also the impact sounds, for latency figures. */
     fun startRecording(withMic: Boolean): File {
@@ -160,9 +172,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         val micAllowed = context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
         if (withMic && micAllowed) probe = LatencyProbe().also { it.start() }
-        recordFile = f
-        recordExec = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "stomp-log") }
-        recorder = w
+        recording = Recording(w, f)
         return f
     }
 
@@ -183,14 +193,13 @@ class StompEngine(private val context: Context, private val output: StompOutput)
     }.onFailure { Log.w("Stomp", "save to Downloads failed", it) }.getOrNull()
 
     fun stopRecording(): File? {
-        val w = recorder ?: return null
-        recorder = null
-        recordExec?.let { it.shutdown(); it.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS) }
-        recordExec = null
-        probe?.let { p -> p.stop(); p.onsetNanos().forEach(w::onset) }
+        val r = recording ?: return null
+        recording = null
+        r.drain()
+        probe?.let { p -> p.stop(); p.onsetNanos().forEach(r.writer::onset) }
         probe = null
-        w.close()
-        return recordFile
+        r.writer.close()
+        return r.file
     }
 
     // ---- live latency test ------------------------------------------------------------------
@@ -213,13 +222,17 @@ class StompEngine(private val context: Context, private val output: StompOutput)
 
     // ---- settings ---------------------------------------------------------------------------
 
+    /** A saved rate that has since been dropped from [RATES] falls back to the fastest. */
+    private fun loadRate() = prefs.getInt("rateHz", RATES[0]).takeIf { it in RATES } ?: RATES[0]
+
     private fun loadMode() = prefs.getString("mode", null)?.let { Mode.valueOf(it) } ?: Mode.SHOE
 
     private fun loadConfig(m: Mode): StompConfig {
         val saved = prefs.getString("config.$m", null) ?: return StompConfig.forMode(m)
         return runCatching { StompConfig.forMode(m).with(saved.split(' ').associate { it.substringBefore('=') to it.substringAfter('=') }) }
             .getOrDefault(StompConfig.forMode(m))
-            .copy(zonesEnabled = false)     // single stomp for the first iteration
+            .let { it.copy(zonesEnabled = false,      // single stomp for the first iteration
+                minThresholdG = it.minThresholdG.coerceAtMost(MAX_THRESHOLD_G)) }
     }
 
     private fun saveConfig(c: StompConfig) =
@@ -232,5 +245,8 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         Placement(v(p[0]), AngleConvention(c[0], c[1]), p[2].toDouble(), p[3].takeIf { it.isNotEmpty() }?.let(::v))
     }.getOrDefault(Placement.DEFAULT)
 
-    companion object { val RATES = listOf(200, 100, 50) }
+    companion object {
+        val RATES = listOf(200, 100, 50)
+        const val MAX_THRESHOLD_G = 2.0
+    }
 }

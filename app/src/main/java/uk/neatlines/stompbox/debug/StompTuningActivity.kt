@@ -25,8 +25,10 @@ import uk.neatlines.stompbox.stomp.Mode
 import uk.neatlines.stompbox.stomp.StompConfig
 import uk.neatlines.stompbox.stomp.StompEngine
 import uk.neatlines.stompbox.stomp.Timing
+import uk.neatlines.stompbox.ui.UiStallWatch
 import uk.neatlines.stompbox.ui.padForSystemBars
 import java.io.File
+import kotlin.math.round
 
 /**
  * Live debug and tuning for the WT901 stomp sensor. Built in code (no layout XML) so it drops into
@@ -131,7 +133,7 @@ class StompTuningActivity : Activity() {
 
         // ---- detector
         col.addView(header("Detector"))
-        slider(col, "Min threshold", "g", 0.2, 2.0, 0.02, { it.minThresholdG }) { c, v -> c.copy(minThresholdG = v) }
+        slider(col, "Min threshold", "g", 0.2, StompEngine.MAX_THRESHOLD_G, 0.02, { it.minThresholdG }) { c, v -> c.copy(minThresholdG = v) }
         slider(col, "Noise factor", "×", 2.0, 15.0, 0.5, { it.noiseFactor }) { c, v -> c.copy(noiseFactor = v) }
         slider(col, "Dead time", "ms", 30.0, 300.0, 5.0, { it.deadTimeMs }) { c, v -> c.copy(deadTimeMs = v) }
         slider(col, "High-pass", "Hz", 0.5, 20.0, 0.5, { it.highPassHz }) { c, v -> c.copy(highPassHz = v) }
@@ -150,13 +152,11 @@ class StompTuningActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (!::engine.isInitialized) return
-        uk.neatlines.stompbox.ui.UiStallWatch.start(); status.removeCallbacks(refresh); status.post(refresh)
+        if (::engine.isInitialized) status.post(refresh)
     }
 
     override fun onPause() {
         super.onPause()
-        uk.neatlines.stompbox.ui.UiStallWatch.stop()
         if (::engine.isInitialized) status.removeCallbacks(refresh)
     }
 
@@ -235,11 +235,9 @@ class StompTuningActivity : Activity() {
             append("\nmode ${c.mode}  feature ${c.feature}  timing ${c.timing}")
             if (c.timing == Timing.STEADY) append(" (late ${engine.pipeline.timing.late})")
             val synth = (application as StompApp).synth
-            append("\naudio: ${synth.deviceLabel}, buffer %.1f ms, output latency %.0f ms, fast path %s, underruns %d".format(
-                synth.bufferMs, synth.outputLatencyMs, if (synth.lowLatencyGranted) "yes" else "NO", synth.underruns))
-            append("\nstalls: BLE gaps >250 ms %d (longest %.0f ms), reconnects %d, failed writes %d; UI freezes >200 ms %d (longest %.0f ms)".format(
-                src.longGaps, src.longestGapMs, src.reconnects, src.failedWrites,
-                uk.neatlines.stompbox.ui.UiStallWatch.freezes, uk.neatlines.stompbox.ui.UiStallWatch.longestMs))
+            append("\naudio: ${synth.summary()}")
+            append("\nstalls: BLE gaps ${src.gaps.summary()}, reconnects ${src.reconnects}, failed writes ${src.failedWrites}; " +
+                "UI freezes ${UiStallWatch.freezes.summary()}")
             append("\ncalibration: angle error %.1f°%s".format(p.conventionErrorDeg, if (p.conventionErrorDeg > 10) " (angles ignored)" else ""))
         }
     }
@@ -271,9 +269,9 @@ class StompTuningActivity : Activity() {
     private fun slider(parent: LinearLayout, name: String, unit: String, min: Double, max: Double, step: Double,
                        get: (StompConfig) -> Double, put: (StompConfig, Double) -> StompConfig) {
         val label = TextView(this)
-        val bar = SeekBar(this).apply { this.max = kotlin.math.round((max - min) / step).toInt() }
+        val bar = SeekBar(this).apply { this.max = round((max - min) / step).toInt() }
         fun show(v: Double) { label.text = "$name: %.2f %s".format(v, unit) }
-        val sync = { val v = get(engine.config); bar.progress = kotlin.math.round((v - min) / step).toInt(); show(v) }
+        val sync = { val v = get(engine.config); bar.progress = round((v - min) / step).toInt(); show(v) }
         bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
                 if (!fromUser) return

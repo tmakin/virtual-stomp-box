@@ -15,7 +15,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import uk.neatlines.stompbox.debug.StompTuningActivity
 import uk.neatlines.stompbox.stomp.StompEvent
-import uk.neatlines.stompbox.ui.UiStallWatch
 import uk.neatlines.stompbox.ui.padForSystemBars
 
 /**
@@ -60,8 +59,8 @@ class MainActivity : Activity() {
         app.engine.onStompUi = { e -> runOnUiThread { show(e) } }
     }
 
-    override fun onResume() { super.onResume(); UiStallWatch.start(); status.post(refresh) }
-    override fun onPause() { super.onPause(); UiStallWatch.stop(); status.removeCallbacks(refresh) }
+    override fun onResume() { super.onResume(); status.post(refresh) }
+    override fun onPause() { super.onPause(); status.removeCallbacks(refresh) }
 
     private fun toggleConnect() {
         if (connected) { app.engine.stop(); connected = false; connect.text = "Connect sensor"; return }
@@ -94,9 +93,8 @@ class MainActivity : Activity() {
                 append("Sensor: ${s.deviceName ?: "-"} · ${s.status}")
                 if (!s.batteryVolts.isNaN()) append(" · battery %.2f V".format(s.batteryVolts))
                 append("\nMode ${e.config.mode} · timing ${e.config.timing} · ${e.rateHz} Hz · stomps ${e.pipeline.detector.triggers}")
-                append("\nAudio: ${app.synth.deviceLabel} · buffer %.1f ms".format(app.synth.bufferMs))
-                if (app.synth.underruns > 0) append(" · underruns ${app.synth.underruns}")
-                if (s.reconnects > 0 || s.longGaps > 0) append("\nBLE gaps >250 ms: ${s.longGaps} · reconnects ${s.reconnects}")
+                append("\nAudio: ${app.synth.summary()}")
+                if (s.reconnects > 0 || s.gaps.count > 0) append("\nBLE gaps ${s.gaps.summary()} · reconnects ${s.reconnects}")
                 if (s.status == "streaming") append("\n").append(e.link().format())
             }
             status.postDelayed(this, 500)

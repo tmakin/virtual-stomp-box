@@ -281,6 +281,23 @@ an amp); the app stalls intermittently; cap the threshold slider at 2.0 g.
   one burst on each underrun, as Oboe's latency tuner does. The `audio:` line names the device.
 - **Threshold slider:** 0.2–2.0 g in 0.02 g steps.
 
+## Nov 25, 2026 · code tidy-up (no change to the latency path)
+
+A review pass over the cleanup above. Nothing here changes how a stomp is detected or played.
+
+- **UI freeze watch:** it was a per-frame callback, which woke the main thread 60–120 times a
+  second. It's now a 10 Hz heartbeat that counts runs more than 200 ms late. It starts and stops
+  itself whenever any screen comes to the front or leaves, so the screens no longer have to.
+- **One gap counter** (`GapCounter`, unit-tested) for BLE gaps and UI freezes. The status labels
+  now take their thresholds from it, so they can't drift from the real values.
+- **Audio:** the device name is now set when Android reports a routing change, so the render
+  thread no longer queries the device every ~40 ms. It names wherever the sound actually goes,
+  including the speaker. Both screens show the same `audio:` text.
+- **Recording:** the log writer and its thread are now one object. Before, a stomp could race with
+  "stop recording" and hit an already-closed executor on the Bluetooth thread.
+- **Settings:** a saved threshold over 2.0 g is capped when loaded, not only on the slider. A
+  saved rate that is no longer offered falls back to 200 Hz.
+
 ## Open questions
 
 - Can the detector fire on the first burst (cut ~30 ms)? Look at a recording of the samples

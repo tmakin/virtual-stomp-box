@@ -1,29 +1,43 @@
 package uk.neatlines.stompbox.ui
 
-import android.view.Choreographer
+import android.app.Activity
+import android.app.Application
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import uk.neatlines.stompbox.debug.GapCounter
 
 /**
- * Counts UI freezes: gaps between display frames over [FREEZE_MS] while a screen is showing.
- * Each screen calls [start] in onResume and [stop] in onPause, so time in the background isn't counted.
+ * Counts UI freezes: a heartbeat posted to the main thread every [PERIOD_MS] that runs more than
+ * 200 ms late. Runs only while one of the app's screens is in front (see [install]).
  */
-object UiStallWatch : Choreographer.FrameCallback {
-    private const val FREEZE_MS = 200.0
-    @Volatile var freezes = 0; private set
-    @Volatile var longestMs = 0.0; private set
-    private var last = 0L
-    private var running = false
+object UiStallWatch {
+    private const val PERIOD_MS = 100L
+    val freezes = GapCounter(thresholdMs = 200.0)
 
-    fun start() { if (!running) { running = true; last = 0L; Choreographer.getInstance().postFrameCallback(this) } }
-    fun stop() { running = false; Choreographer.getInstance().removeFrameCallback(this) }
-
-    override fun doFrame(frameTimeNanos: Long) {
-        if (!running) return
-        if (last != 0L) {
-            val gap = (frameTimeNanos - last) / 1e6
-            if (gap > FREEZE_MS) freezes++
-            if (gap > longestMs) longestMs = gap
+    private val main = Handler(Looper.getMainLooper())
+    private var due = 0L
+    private var resumed = 0
+    private val beat = object : Runnable {
+        override fun run() {
+            val now = SystemClock.uptimeMillis()
+            freezes.record((now - due).toDouble())
+            due = now + PERIOD_MS
+            main.postDelayed(this, PERIOD_MS)
         }
-        last = frameTimeNanos
-        Choreographer.getInstance().postFrameCallback(this)
     }
+
+    /** Starts and stops the heartbeat as the app's screens come and go. */
+    fun install(app: Application) = app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+        override fun onActivityResumed(a: Activity) {
+            if (resumed++ == 0) { due = SystemClock.uptimeMillis() + PERIOD_MS; main.postDelayed(beat, PERIOD_MS) }
+        }
+        override fun onActivityPaused(a: Activity) { if (--resumed == 0) main.removeCallbacks(beat) }
+        override fun onActivityCreated(a: Activity, b: Bundle?) {}
+        override fun onActivityStarted(a: Activity) {}
+        override fun onActivityStopped(a: Activity) {}
+        override fun onActivitySaveInstanceState(a: Activity, b: Bundle) {}
+        override fun onActivityDestroyed(a: Activity) {}
+    })
 }
