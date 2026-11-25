@@ -252,7 +252,18 @@ detect: only 1 of 14 impacts heard by the mic (63 ms; total 167 ms)
   AAudio stream that asks for exclusive (MMAP) mode, which skips Android's mixer. The `audio:`
   line says whether exclusive was granted.
 - **First result:** exclusive is granted on the USB-C to 3.5 mm adapter (`KM_B2 AUX`), not only on
-  the speaker. The latency test with the mic hasn't been run yet.
+  the speaker. Status (build #31):
+
+  ```
+  audio: USB audio 'USB-Audio - KM_B2 AUX', AAudio exclusive (MMAP), buffer 4.0 ms, output latency 6 ms, underruns 0
+  latency: no stomps measured yet (7 with no impact heard)
+  ```
+
+  Android now reports 6 ms output latency against 69 ms with AudioTrack, and a 4 ms buffer with no
+  underruns. That's Android's own estimate; it still needs checking by mic.
+- **Latency test fix:** with the mic by the amp it heard only the drums, and the test dropped any
+  stomp with no impact heard, output figure included. It now keeps those as a separate
+  "drums heard with no impact: output median …" line.
 
 ## 2026-11-25: Recording with the mic on, USB-C adapter (`stomp-20261125-093609`)
 
@@ -275,8 +286,8 @@ detected sample -> fired: 12-97 ms, median 37 ms
 
 ## Open questions
 
-- **Phone audio output (~100 ms on both speaker and USB-C):** how much does the AAudio exclusive
-  engine save on the USB-C adapter? Otherwise a separate box (Raspberry Pi or Teensy reading the sensor over USB) avoids
+- **Phone audio output (~100 ms on both speaker and USB-C):** Android reports 6 ms with the AAudio
+  exclusive engine on the USB-C adapter (69 ms with AudioTrack); does the mic agree? Otherwise a separate box (Raspberry Pi or Teensy reading the sensor over USB) avoids
   both the phone's audio delay and the Bluetooth batching.
 - **First-burst detection:** can the detector fire on the first burst (cut ~30 ms)? Needs a
   recording with the mic around real stomps.

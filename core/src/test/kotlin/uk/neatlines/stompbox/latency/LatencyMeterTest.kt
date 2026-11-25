@@ -2,6 +2,7 @@ package uk.neatlines.stompbox.latency
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LatencyMeterTest {
@@ -54,6 +55,10 @@ class LatencyMeterTest {
         }
         assertEquals(0, m.poll(20_000 * ms).size)
         assertEquals(6, m.unpaired)
+        // The drums alone still give the output delay (mic by the amp).
+        assertEquals(6, m.outputOnly().size)
+        m.outputOnly().forEach { assertEquals(100.0, it, 0.01) }
+        assertTrue(LatencyMeter.summary(emptyList(), m.unpaired, m.outputOnly()).contains("output median 100 ms"))
     }
 
     @Test fun fastRhythmWithImpactsHeard() {
