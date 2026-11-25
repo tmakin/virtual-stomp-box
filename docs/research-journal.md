@@ -246,11 +246,18 @@ detect: only 1 of 14 impacts heard by the mic (63 ms; total 167 ms)
 - **Bluetooth batching unchanged:** 8 frames per notification, ~42 ms apart.
 - **The mic missed most impacts:** put the phone nearer the foot to measure detect.
 
+## 2026-11-25: AAudio exclusive (MMAP) engine (`7817fe7`)
+
+- **Change:** an **Audio engine** setting on the tuning screen: AudioTrack (as before) or a native
+  AAudio stream that asks for exclusive (MMAP) mode, which skips Android's mixer. The `audio:`
+  line says whether exclusive was granted.
+- **First result:** exclusive is granted on the USB-C to 3.5 mm adapter (`KM_B2 AUX`), not only on
+  the speaker. The latency test with the mic hasn't been run yet.
+
 ## Open questions
 
-- **Phone audio output (~100 ms on both speaker and USB-C):** try AAudio/Oboe in exclusive (MMAP)
-  mode on the built-in speaker. Pixels support it there (not on USB), and it skips Android's
-  mixer. Otherwise a separate box (Raspberry Pi or Teensy reading the sensor over USB) avoids
+- **Phone audio output (~100 ms on both speaker and USB-C):** how much does the AAudio exclusive
+  engine save on the USB-C adapter? Otherwise a separate box (Raspberry Pi or Teensy reading the sensor over USB) avoids
   both the phone's audio delay and the Bluetooth batching.
 - **First-burst detection:** can the detector fire on the first burst (cut ~30 ms)? Needs a
   recording with the mic around real stomps.
