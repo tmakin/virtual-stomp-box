@@ -302,13 +302,31 @@ detected sample -> fired: 12-97 ms, median 37 ms
   (54-116 ms): an impact that just misses a notification waits up to ~80 ms.
 - **Change:** recordings now log the audio engine line (`audio=` in `# info`).
 
+## 2026-11-25: First-burst check on the two USB-C recordings
+
+From the samples alone, no mic needed: the first sample with a jolt of 0.5 g or more, against the
+burst the detector fired on. Threshold 0.5 g (it was 1.2 g when the ~30 ms was measured).
+
+```
+stomp-20261125-090412: 14 stomps, 11 fired in the first jolt's burst
+stomp-20261125-093609: 11 stomps,  9 fired in the first jolt's burst
+the 5 that waited: first jolt was frame 8 of 8, the last in its burst; they fired one
+notification later (2-78 ms)
+```
+
+- **At 0.5 g the detector already fires on the first burst** for 20 of 25 stomps. The ~30 ms
+  gap measured at 1.2 g is mostly gone.
+- **What's left:** a jolt in the last frame of a burst is a single sample, so the detector waits
+  for the next one. Firing on that one sample saves one notification on about 1 stomp in 5, but
+  risks false triggers. Checking that needs recordings of non-stomp movement.
+
 ## Open questions
 
 - **Phone audio output (~100 ms on both speaker and USB-C):** solved for USB-C: AAudio exclusive
   measures 23 ms by mic (~103 ms with AudioTrack). Otherwise a separate box (Raspberry Pi or Teensy reading the sensor over USB) avoids
   both the phone's audio delay and the Bluetooth batching.
-- **First-burst detection:** can the detector fire on the first burst (cut ~30 ms)? Needs a
-  recording with the mic around real stomps.
+- **First-burst detection:** mostly done at 0.5 g (20 of 25 stomps). Fire on a lone last-frame
+  jolt too? Needs recordings of walking and weight shifts to check false triggers.
 - **Stalls:** what does the `stalls:` line show when one happens? Build #34 showed 52 reconnects
   in one session: why?
 - **Custom firmware:** the WT901BLECL datasheet names one nRF52832 as the Bluetooth chip, with an
