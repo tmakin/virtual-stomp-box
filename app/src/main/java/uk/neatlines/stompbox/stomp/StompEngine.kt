@@ -6,7 +6,9 @@ import android.os.Process
 import android.util.Log
 import uk.neatlines.stompbox.debug.LinkStats
 import uk.neatlines.stompbox.debug.StompLogWriter
+import uk.neatlines.stompbox.input.SensorSource
 import uk.neatlines.stompbox.input.WitBleSource
+import uk.neatlines.stompbox.input.WitUsbSource
 import uk.neatlines.stompbox.latency.LatencyMeter
 import uk.neatlines.stompbox.latency.LatencyProbe
 import uk.neatlines.stompbox.wit.WitSample
@@ -20,33 +22,50 @@ import java.util.concurrent.locks.LockSupport
 
 /** What the app's sound engine has to provide. */
 fun interface StompOutput {
-    /** Play now. Called on the GATT thread (IMMEDIATE) or the scheduler thread (STEADY). */
+    /** Play now. Called on the sensor's read thread (IMMEDIATE) or the scheduler thread (STEADY). */
     fun play(note: Int, velocity: Int)
 }
 
 /**
- * The WT901 stomp input for the app: BLE source → [StompPipeline] → sound, plus everything the
+ * The WT901 stomp input for the app: sensor link (Bluetooth or USB cable) → [StompPipeline] → sound, plus everything the
  * debug screen needs (live frames, link stats, calibration, recording, settings per mode).
  *
  * ```
  * val engine = StompEngine(context) { note, vel -> soundEngine.trigger(note, vel) }
- * engine.start()            // scans for a "WT…" device, or start(savedAddress)
+ * engine.start()            // Bluetooth: scans for a "WT…" device; wired: opens the USB sensor
  * ```
  */
 class StompEngine(private val context: Context, private val output: StompOutput) {
     private val prefs = context.getSharedPreferences("stomp", Context.MODE_PRIVATE)
 
     val pipeline = StompPipeline(loadConfig(loadMode()), loadPlacement(), loadRate()) { e, at -> onStomp(e, at) }
-    val source = WitBleSource(context, pipeline.rateHz, onSample = ::onSample)
+    val ble = WitBleSource(context, pipeline.rateHz, onSample = ::onSample)
+    val usb = WitUsbSource(context, pipeline.rateHz, onSample = ::onSample).apply { onOpened = pipeline::restartClock }
+
+    /**
+     * Read the sensor over its USB cable instead of Bluetooth: one frame every 5 ms with no
+     * Bluetooth packing. Switching while connected disconnects and connects over the new link.
+     */
+    var wired: Boolean = prefs.getBoolean("wired", false)
+        set(v) {
+            if (v == field) return
+            val wasRunning = isRunning
+            if (wasRunning) stop()
+            field = v; prefs.edit().putBoolean("wired", v).apply()
+            if (wasRunning) start()
+        }
+
+    /** The link in use. */
+    val source: SensorSource get() = if (wired) usb else ble
 
     /** Sensor output rate, Hz (50, 100 or 200). Lower it if the link can't carry every frame. */
     var rateHz: Int
         get() = pipeline.rateHz
-        set(v) { prefs.edit().putInt("rateHz", v).apply(); source.rateHz = v; pipeline.rateHz = v }
+        set(v) { prefs.edit().putInt("rateHz", v).apply(); ble.rateHz = v; usb.rateHz = v; pipeline.rateHz = v }
 
     /** Latest stomps for the UI, newest last. */
     val recentStomps = ArrayDeque<StompEvent>()
-    /** For the home screen's flash; called on the GATT thread. */
+    /** For the home screen's flash; called on the sensor's read thread. */
     @Volatile var onStompUi: ((StompEvent) -> Unit)? = null
     @Volatile var lastSample: WitSample? = null; private set
 
@@ -58,10 +77,10 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         get() = config.mode
         set(m) { prefs.edit().putString("mode", m.name).apply(); pipeline.config = loadConfig(m) }
 
-    fun start(address: String? = null) = source.start(address)
+    fun start() { pipeline.restartClock(); source.start() }
     /** True from [start] until [stop] (scanning, connected or reconnecting). */
-    val isRunning get() = source.running
-    fun stop() { stopRecording(); stopLatencyTest(); source.stop() }
+    val isRunning get() = ble.running || usb.running
+    fun stop() { stopRecording(); stopLatencyTest(); ble.stop(); usb.stop() }
     fun link(): LinkStats.Snapshot = pipeline.link.snapshot()
 
     // ---- the latency path -------------------------------------------------------------------
@@ -145,7 +164,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
 
     // ---- recording --------------------------------------------------------------------------
 
-    /** A log writer plus the one thread that formats and writes it, off the GATT thread. */
+    /** A log writer plus the one thread that formats and writes it, off the sensor's read thread. */
     private class Recording(val writer: StompLogWriter, val file: File) {
         private val exec: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "stomp-log") }
         /** Queues a write; dropped if the recording has just been stopped. */
@@ -167,7 +186,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         val f = File(dir, "stomp-%tY%<tm%<td-%<tH%<tM%<tS.csv".format(java.util.Date()))
         val w = StompLogWriter(f.bufferedWriter(bufferSize = 1 shl 16))
         w.header(config, pipeline.placement, mapOf(
-            "rateHz" to "$rateHz", "rateReg" to "${source.rateRegister}", "bandwidthReg" to "${source.bandwidthRegister}",
+            "link" to source.kind, "rateHz" to "$rateHz", "rateReg" to "${source.rateRegister}", "bandwidthReg" to "${source.bandwidthRegister}",
             "batteryV" to "${source.batteryVolts}", "device" to (source.deviceName ?: "?"),
             "phone" to "${Build.MANUFACTURER} ${Build.MODEL}", "android" to "${Build.VERSION.SDK_INT}",
             "audio" to ((output as? uk.neatlines.stompbox.audio.DrumSynth)?.summary() ?: "?"),
@@ -183,7 +202,7 @@ class StompEngine(private val context: Context, private val output: StompOutput)
      * Copies a recording to the phone's Downloads/StompBox folder, where the Files app, a USB
      * cable (no adb) and any upload page can see it. Returns the folder-relative name, or null.
      */
-    fun saveToDownloads(f: File): String? = runCatching {
+    fun saveToDownloads(f: File): String? = if (Build.VERSION.SDK_INT < 29) null else runCatching {
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.Downloads.DISPLAY_NAME, f.name)
             put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/csv")

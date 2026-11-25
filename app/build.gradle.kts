@@ -13,7 +13,9 @@ android {
 
     defaultConfig {
         applicationId = "uk.neatlines.stompbox"
-        minSdk = 33            // Android 13: the GATT write APIs used by WitBleSource
+        // Android 9, so an old phone can read the sensor over USB. Bluetooth needs Android 13 (the GATT
+        // write APIs WitBleSource uses) and says so on older phones. 28 is also AAudio's setUsage.
+        minSdk = 28
         targetSdk = 35
         // CI run number, so every downloaded build installs over the previous one.
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
@@ -23,8 +25,8 @@ android {
         val built = ZonedDateTime.now(ZoneOffset.UTC)
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'"))
         buildConfigField("String", "BUILD_LABEL", "\"#$versionCode $sha $built\"")
-        // Native AAudio engine (src/main/cpp): 64-bit ARM only, which every current Pixel is.
-        ndk { abiFilters += "arm64-v8a" }
+        // Native AAudio engine (src/main/cpp): 64-bit ARM, plus 32-bit ARM for older phones.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }

@@ -339,6 +339,26 @@ steady delay 100 ms: 0 of 25 late
   after the impact by mic, plus 100 ms, plus 23 ms output), against 80–180 ms with IMMEDIATE.
   Not yet tried by ear.
 
+## 2026-11-25: Wired sensor option (USB cable to a second phone)
+
+Plan: an old phone reads the sensor over its USB-C cable and plays the drum through its own audio
+jack, which avoids the Bluetooth packing entirely.
+
+- **Change:** a "Sensor link: Bluetooth / USB cable" button on the home screen. USB drives the
+  sensor's CH340 chip directly (115200 baud, no driver library), reads on its own audio-priority
+  thread and timestamps each read. It sets rate and bandwidth over the cable as it does over
+  Bluetooth. Plugging in the sensor offers to open the app and switches it to USB. The first
+  300 ms after opening is dropped (the chip's backlog), and the sample clock restarts on each
+  connect.
+- **Older phones:** minSdk is now 28 (Android 9, was 33), and the native audio engine is also
+  built for 32-bit ARM. Bluetooth still needs Android 13 and says so on older phones. Before
+  Android 10, recordings aren't copied to Downloads (Share still works).
+- **Status:** `USB: … frames per read` should read ~1.00, with the ping (register round trip) a
+  few ms. Battery shows the supply instead (~5 V).
+- **Expected:** the detected sample arrives ~3 ms after it is measured, against 12–97 ms over
+  Bluetooth. That leaves the detector (~30 ms from impact to the detected sample) and the old
+  phone's audio output. Untested: needs the old phone, and a USB-C (or OTG) cable or adapter.
+
 ## Open questions
 
 - **Phone audio output (~100 ms on both speaker and USB-C):** solved for USB-C: AAudio exclusive

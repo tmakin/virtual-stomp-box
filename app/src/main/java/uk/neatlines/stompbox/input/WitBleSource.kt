@@ -46,15 +46,15 @@ class WitBleSource(
     private val bandwidthHz: Int = 188,
     /** Called on the GATT binder thread. Keep it short: it is on the latency path. */
     private val onSample: (WitSample, arrivalNanos: Long) -> Unit,
-) {
-    /** Output rate to set on the sensor. Changing it while connected reconfigures the sensor. */
-    @Volatile var rateHz: Int = rateHz
+) : SensorSource {
+    override val kind = "Bluetooth"
+    @Volatile override var rateHz: Int = rateHz
         set(v) { require(v in Wit.RATE_CODES); field = v; handler.post { configureIfNeeded() } }
-    @Volatile var status: String = "idle"; private set
-    @Volatile var batteryVolts: Double = Double.NaN; private set
-    @Volatile var rateRegister: Int = -1; private set
-    @Volatile var bandwidthRegister: Int = -1; private set
-    @Volatile var deviceName: String? = null; private set
+    @Volatile override var status: String = "idle"; private set
+    @Volatile override var batteryVolts: Double = Double.NaN; private set
+    @Volatile override var rateRegister: Int = -1; private set
+    @Volatile override var bandwidthRegister: Int = -1; private set
+    @Volatile override var deviceName: String? = null; private set
     @Volatile var mtu = 23; private set
     /** The sensor's GATT services and characteristics, and any firmware-update services among them. */
     @Volatile var gattServices: String = "?"; private set
@@ -71,15 +71,13 @@ class WitBleSource(
     val framesPerNotification: Double get() = if (notifications == 0L) 0.0 else (parser.frames - framesAtConnect).toDouble() / notifications
 
     // ---- stall diagnostics: is a stall in the link (gaps, reconnects) or elsewhere?
-    /** Times the link dropped and was reconnected since [start]. */
-    @Volatile var reconnects = 0; private set
+    @Volatile override var reconnects = 0; private set
     /** Gaps between notifications while streaming (normally ~44 ms; over 250 ms counts as a stall). */
-    val gaps = GapCounter(thresholdMs = 250.0)
+    override val gaps = GapCounter(thresholdMs = 250.0)
     /** Writes that got no reply in time, or that Android still refused after [MAX_TRIES] tries. */
-    @Volatile var failedWrites = 0; private set
+    @Volatile override var failedWrites = 0; private set
 
-    /** Register-read round trip (write `FF AA 27 40` → `55 71` reply), timed every 5 s. */
-    val pingSummary: String get() {
+    override val pingSummary: String get() {
         val v = synchronized(pings) { pings.sorted() }
         if (v.isEmpty()) return "no replies yet"
         return "median %.0f ms, min %.0f, max %.0f (n=%d)".format(v[v.size / 2], v.first(), v.last(), v.size)
@@ -96,18 +94,17 @@ class WitBleSource(
     private var arrival = 0L
     private var scanCallback: ScanCallback? = null
     @Volatile private var stopped = true
-    /** True from [start] until [stop], including while scanning or reconnecting. */
-    val running get() = !stopped
+    override val running get() = !stopped
     private val parser = WitPacketParser(
         onSample = { s -> onSample(s, arrival) },
         onRegisters = { reg, v -> onRegisters(reg, v) },
     )
 
-    /** Connects to [address] if given, otherwise to the first device whose name starts with "WT". */
-    fun start(address: String? = null) {
+    /** Connects to the first device whose name starts with "WT". */
+    override fun start() {
         if (!stopped) return     // already running: a second start would open a second connection
+        if (android.os.Build.VERSION.SDK_INT < 33) { setStatus("Bluetooth needs Android 13 or later: use the USB cable"); return }
         stopped = false; reconnects = 0; gaps.reset(); failedWrites = 0
-        if (address != null) { handler.post { if (!stopped) connect(manager.adapter.getRemoteDevice(address)) }; return }
         setStatus("scanning")
         val scanner = manager.adapter.bluetoothLeScanner
         val cb = object : ScanCallback() {
@@ -128,7 +125,7 @@ class WitBleSource(
         handler.postDelayed({ scanner.stopScan(cb); if (gatt == null) setStatus("no WT901 found") }, 15_000)
     }
 
-    fun stop() {
+    override fun stop() {
         stopped = true
         handler.removeCallbacksAndMessages(null)
         handler.post(::resetWrites)

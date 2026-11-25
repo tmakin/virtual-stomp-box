@@ -1,5 +1,6 @@
 package uk.neatlines.stompbox.ui
 
+import android.os.Build
 import android.view.View
 import android.view.WindowInsets
 
@@ -9,8 +10,14 @@ import android.view.WindowInsets
  */
 fun View.padForSystemBars(extraPx: Int) {
     setOnApplyWindowInsetsListener { v, insets ->
-        val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-        v.setPadding(b.left + extraPx, b.top + extraPx, b.right + extraPx, b.bottom + extraPx)
+        if (Build.VERSION.SDK_INT >= 30) {
+            val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            v.setPadding(b.left + extraPx, b.top + extraPx, b.right + extraPx, b.bottom + extraPx)
+        } else {
+            @Suppress("DEPRECATION")
+            v.setPadding(insets.systemWindowInsetLeft + extraPx, insets.systemWindowInsetTop + extraPx,
+                insets.systemWindowInsetRight + extraPx, insets.systemWindowInsetBottom + extraPx)
+        }
         insets
     }
 }

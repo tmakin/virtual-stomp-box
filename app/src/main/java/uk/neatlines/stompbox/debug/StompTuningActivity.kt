@@ -20,6 +20,8 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import uk.neatlines.stompbox.StompApp
 import uk.neatlines.stompbox.audio.DrumSynth
+import uk.neatlines.stompbox.input.WitBleSource
+import uk.neatlines.stompbox.input.WitUsbSource
 import uk.neatlines.stompbox.latency.LatencyMeter
 import uk.neatlines.stompbox.stomp.Feature
 import uk.neatlines.stompbox.stomp.Mode
@@ -223,18 +225,23 @@ class StompTuningActivity : Activity() {
         val c = engine.config; val p = engine.pipeline.placement; val src = engine.source; val link = engine.link()
         return buildString {
             append("build ${uk.neatlines.stompbox.BuildConfig.BUILD_LABEL}\n")
-            append("${src.deviceName ?: "-"}: ${src.status}")
-            if (!src.batteryVolts.isNaN()) append("  battery %.2f V".format(src.batteryVolts))
+            append("${src.kind}: ${src.deviceName ?: "-"}: ${src.status}")
+            if (!src.batteryVolts.isNaN()) append("  ${if (engine.wired) "supply" else "battery"} %.2f V".format(src.batteryVolts))
             append("\nsensor set to ${engine.rateHz} Hz (rate reg ${src.rateRegister}, bandwidth reg ${src.bandwidthRegister})")
-            append("\nBLE: MTU ${src.mtu}, interval %s, peripheral latency %s, timeout %s, %.2f frames/notification".format(
-                if (src.connIntervalMs < 0) "?" else "%.2f ms".format(src.connIntervalMs),
-                if (src.connLatency < 0) "?" else "${src.connLatency}",
-                if (src.connTimeoutMs < 0) "?" else "${src.connTimeoutMs} ms",
-                src.framesPerNotification))
+            if (src is WitBleSource) {
+                append("\nBLE: MTU ${src.mtu}, interval %s, peripheral latency %s, timeout %s, %.2f frames/notification".format(
+                    if (src.connIntervalMs < 0) "?" else "%.2f ms".format(src.connIntervalMs),
+                    if (src.connLatency < 0) "?" else "${src.connLatency}",
+                    if (src.connTimeoutMs < 0) "?" else "${src.connTimeoutMs} ms",
+                    src.framesPerNotification))
+            }
+            if (src is WitUsbSource) append("\nUSB: 115200 baud, %.2f frames per read (%d reads)".format(src.framesPerRead, src.reads))
             append("\nping (register read round trip): ${src.pingSummary}")
-            append("\nfirmware: ${src.deviceInfo.ifEmpty { "no Device Info strings" }}; version regs ${src.versionRegisters}")
-            append("\nupdate service: ${src.updateServices.joinToString().ifEmpty { "none found" }}")
-            append("\nGATT: ${src.gattServices}")
+            if (src is WitBleSource) {
+                append("\nfirmware: ${src.deviceInfo.ifEmpty { "no Device Info strings" }}; version regs ${src.versionRegisters}")
+                append("\nupdate service: ${src.updateServices.joinToString().ifEmpty { "none found" }}")
+                append("\nGATT: ${src.gattServices}")
+            }
             append("\n").append(link.format())
             if (src.status == "streaming" && link.samples > 400 && link.sampleRateHz < 0.9 * engine.rateHz) {
                 append("\n⚠ receiving %.0f of %d frames/s: the link isn't keeping up, so frames queue in the sensor and add delay. Try a lower sensor rate."
@@ -244,7 +251,7 @@ class StompTuningActivity : Activity() {
             if (c.timing == Timing.STEADY) append(" (late ${engine.pipeline.timing.late})")
             val synth = (application as StompApp).synth
             append("\naudio: ${synth.summary()}")
-            append("\nstalls: BLE gaps ${src.gaps.summary()}, reconnects ${src.reconnects}, failed writes ${src.failedWrites}; " +
+            append("\nstalls: ${if (engine.wired) "USB" else "BLE"} gaps ${src.gaps.summary()}, reconnects ${src.reconnects}, failed writes ${src.failedWrites}; " +
                 "UI freezes ${UiStallWatch.freezes.summary()}")
             append("\ncalibration: angle error %.1f°%s".format(p.conventionErrorDeg, if (p.conventionErrorDeg > 10) " (angles ignored)" else ""))
         }

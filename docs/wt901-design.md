@@ -73,6 +73,7 @@ Android `DeviceModel.java`, Unity `WT901BLE.cs`, Python `device_model.py`).
 
 ```
 WT901 ──BLE notify (FFE4)──▶ WitBleSource        takes System.nanoTime() first, on the GATT thread
+   └──USB-C cable (CH340)──▶ WitUsbSource        or: 115200 baud, one frame per sample, own read thread
                               │  WitPacketParser   bytes → WitSample (g, °/s, °)
                               ▼
                          StompPipeline            same code on the phone and in the replay tool
@@ -93,7 +94,8 @@ WT901 ──BLE notify (FFE4)──▶ WitBleSource        takes System.nanoTime
 | `stomp/Orientation.kt`: gravity from angles, calibration, tilt | `core` | unit tests |
 | `stomp/StompConfig.kt`, `StompDetector.kt`, `StompTiming.kt`, `StompPipeline.kt` | `core` | unit tests on simulated stomps |
 | `debug/StompLog.kt`, `LinkStats.kt`, `Replay.kt` | `core` | round-trip test; replay run on a synthetic log |
-| `input/WitBleSource.kt`, `stomp/StompEngine.kt`, `debug/StompTuningActivity.kt`, `debug/StompPlotView.kt` | `app` | compiled by CI only; not run on a phone yet |
+| `input/WitBleSource.kt`, `stomp/StompEngine.kt`, `debug/StompTuningActivity.kt`, `debug/StompPlotView.kt` | `app` | on a Pixel 8a (see the journal) |
+| `input/WitUsbSource.kt`: the sensor over its USB cable, for a phone wired to the sensor (home screen "Sensor link") | `app` | compiled by CI only; not run on a phone yet |
 
 ## How the detector uses the data
 

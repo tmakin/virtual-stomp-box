@@ -5,6 +5,8 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.hardware.usb.UsbManager
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -26,6 +28,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var big: TextView
     private lateinit var connect: Button
+    private lateinit var link: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,6 +40,10 @@ class MainActivity : Activity() {
             textSize = 48f; gravity = Gravity.CENTER; text = "—"; setTextColor(Color.WHITE)
         }
         connect = Button(this).apply { text = "Connect sensor"; setOnClickListener { toggleConnect() } }
+        link = Button(this).apply {
+            isAllCaps = false
+            setOnClickListener { app.engine.wired = !app.engine.wired; showConnected() }
+        }
         val tune = Button(this).apply {
             text = "Tune & debug"
             setOnClickListener { startActivity(Intent(this@MainActivity, StompTuningActivity::class.java)) }
@@ -48,6 +55,7 @@ class MainActivity : Activity() {
 
         col.addView(status)
         col.addView(big, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        col.addView(link, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         col.addView(connect, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         col.addView(LinearLayout(this).apply {
             addView(tune, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
@@ -56,6 +64,17 @@ class MainActivity : Activity() {
         setContentView(col)
 
         app.engine.onStompUi = { e -> runOnUiThread { show(e) } }
+        onUsbAttached(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); onUsbAttached(intent) }
+
+    /** Opened by plugging in the sensor (see res/xml/usb_device_filter.xml): switch to wired and connect. */
+    private fun onUsbAttached(i: Intent?) {
+        if (i?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+        app.engine.wired = true
+        if (!app.engine.isRunning) app.engine.start()
+        showConnected()
     }
 
     override fun onResume() { super.onResume(); showConnected(); status.post(refresh) }
@@ -65,6 +84,9 @@ class MainActivity : Activity() {
         // The engine outlives this screen, so ask it rather than keeping a flag that a recreated
         // activity would lose (and then start a second connection).
         if (app.engine.isRunning) { app.engine.stop(); showConnected(); return }
+        // USB asks for its own permission. Before Android 13 Bluetooth isn't supported and its
+        // source just says so, so don't ask for permissions that don't exist there.
+        if (app.engine.wired || Build.VERSION.SDK_INT < 33) { app.engine.start(); showConnected(); return }
         val needed = arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
             .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
         if (needed.isNotEmpty()) { requestPermissions(needed.toTypedArray(), 1); return }
@@ -72,7 +94,10 @@ class MainActivity : Activity() {
         showConnected()
     }
 
-    private fun showConnected() { connect.text = if (app.engine.isRunning) "Disconnect" else "Connect sensor" }
+    private fun showConnected() {
+        connect.text = if (app.engine.isRunning) "Disconnect" else "Connect sensor"
+        link.text = "Sensor link: ${app.engine.source.kind} (tap to switch)"
+    }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, results)
@@ -93,11 +118,11 @@ class MainActivity : Activity() {
             val e = app.engine; val s = e.source
             status.text = buildString {
                 append("Build ${BuildConfig.BUILD_LABEL}\n")
-                append("Sensor: ${s.deviceName ?: "-"} · ${s.status}")
-                if (!s.batteryVolts.isNaN()) append(" · battery %.2f V".format(s.batteryVolts))
+                append("Sensor (${s.kind}): ${s.deviceName ?: "-"} · ${s.status}")
+                if (!s.batteryVolts.isNaN()) append(" · ${if (e.wired) "supply" else "battery"} %.2f V".format(s.batteryVolts))
                 append("\nMode ${e.config.mode} · timing ${e.config.timing} · ${e.rateHz} Hz · stomps ${e.pipeline.detector.triggers}")
                 append("\nAudio: ${app.synth.summary()}")
-                if (s.reconnects > 0 || s.gaps.count > 0) append("\nBLE gaps ${s.gaps.summary()} · reconnects ${s.reconnects}")
+                if (s.reconnects > 0 || s.gaps.count > 0) append("\ngaps ${s.gaps.summary()} · reconnects ${s.reconnects}")
                 if (s.status == "streaming") append("\n").append(e.link().format())
             }
             status.postDelayed(this, 500)
