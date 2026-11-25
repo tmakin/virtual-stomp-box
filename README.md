@@ -54,9 +54,8 @@ Studio, or run `./gradlew :app:installDebug` with the phone connected.
 ## Earlier work (superseded)
 
 - [docs/leg-sensor-research.md](docs/leg-sensor-research.md) compared sensors and recommended a
-  XIAO nRF52840 board with custom firmware ([firmware/xiao-tap-midi](firmware/xiao-tap-midi)).
-- The related Android MIDI sources are in [legacy/xiao-android](legacy/xiao-android), which isn't
-  built. Their notes are in [docs/android-integration-old.md](docs/android-integration-old.md).
+  XIAO nRF52840 board with custom firmware. The firmware and its Android MIDI sources are on the
+  `xiao-tap-midi` branch (PR #5); issue #4 tracks reviving them.
 
 No latency figure here has been measured yet; they all come from the model. A recording made
 with the tuning screen's "with mic" option measures the real numbers.

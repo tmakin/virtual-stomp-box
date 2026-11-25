@@ -8,7 +8,7 @@ Oct 31, 2026 · answer to the "Leg-Strapped Accelerometer for Stomp Box" handoff
 ## Short answer
 
 **Buy and test first: Seeed XIAO nRF52840 Sense (about £16) with our own firmware**
-([`firmware/xiao-tap-midi`](../firmware/xiao-tap-midi)). It detects the tap on the board and sends one
+(`firmware/xiao-tap-midi` on the `xiao-tap-midi` branch, PR #5). It detects the tap on the board and sends one
 standard BLE MIDI note, so the app reads it through `android.media.midi` with no vendor SDK. The
 same firmware also sends USB MIDI over the board's USB-C port.
 
@@ -85,7 +85,7 @@ this; it is the link itself. Three ways round it, in order of preference:
 
 **Not measured.** This session has no XIAO board and no Pixel 8. What's ready:
 
-- **Firmware** for the XIAO: [`firmware/xiao-tap-midi/xiao-tap-midi.ino`](../firmware/xiao-tap-midi/xiao-tap-midi.ino).
+- **Firmware** for the XIAO: `firmware/xiao-tap-midi/xiao-tap-midi.ino` (on the `xiao-tap-midi` branch, PR #5).
   Not compiled: the Arduino toolchain download was blocked in this session.
 - **Test harness** for the Pixel 8: [`android/android-only/.../latency/LatencyProbe.kt`](../android/android-only/uk/neatlines/stompbox/latency/LatencyProbe.kt).
   It follows steps 1–3 of the handoff. It detects the impact on the mic and maps it to

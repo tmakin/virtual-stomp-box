@@ -147,4 +147,4 @@ Found in code review; not yet tried on hardware.
 - **Custom firmware:** ask WitMotion whether the packing timer can be shortened (they sell
   customisation); nothing public covers it.
 - **A faster sensor:** the WT901's ~44 ms packing is the floor for this sensor. On-sensor detection
-  over BLE (the XIAO firmware) should give ~10–15 ms sensor → phone; see issue #4.
+  over BLE (the XIAO firmware, PR #5) should give ~10–15 ms sensor → phone; see issue #4.
