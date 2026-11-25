@@ -197,7 +197,7 @@ was written apart from the rate.
   These are the D0–D3 port registers on the wired WT901, so this firmware reuses them.
 - **Live data:** time 0x30–0x33, accel/gyro/mag/angle 0x34–0x3F, temperature 0x40, quaternion
   0x51–0x54.
-- **Undocumented, 0x63–0x75:** 0x63 = 1000, 0x64 ≈ 515 (moves slightly; maybe a voltage),
+- **Undocumented, 0x63–0x75** (0x64 and 0x72 are explained in the next entry): 0x63 = 1000, 0x64 ≈ 515 (moves slightly; battery),
   0x66–0x68 fixed, **0x6A changes (1, 2, 3, 5)**, 0x6B = 200, **0x6C counts up ~100 per read** (a
   ms timer), 0x6D/0x6E = 500, 0x6F = 300, 0x70 = 16, 0x72 = 5, 0x75 = 0x7000. 0x6A could be a queue
   count; nothing here is clearly a Bluetooth packing setting, and none of it has been written.
@@ -339,6 +339,43 @@ steady delay 100 ms: 0 of 25 late
   after the impact by mic, plus 100 ms, plus 23 ms output), against 80–180 ms with IMMEDIATE.
   Not yet tried by ear.
 
+## 2026-11-25: Register 0x6A and firmware hack feasibility (web search, MacBook)
+
+Searched the web and read WitMotion's public sample code for anything on the undocumented
+registers, and for whether the firmware could be hacked. Nothing was written to the sensor.
+
+**Registers.** WitMotion's [BLE 5.0 protocol page](https://wit-motion.gitbook.io/witmotion-sdk/ble-5.0-protocol/bluetooth-5.0-communication-protocol)
+has a register table that stops at 0x54 and says nothing about connection interval, packing or
+delay. The samples in [WitBluetooth_BWT901BLE5_0](https://github.com/WITMOTION/WitBluetooth_BWT901BLE5_0)
+(Android, iOS, Windows, Unity, Python; 349 source files, grepped, nothing run) explain a few
+registers we saw in the dump:
+
+- **0x64 = battery** (comment "电量"; the protocol page's example read is 0x0348 = 840).
+- **0x72 = magnetometer type** (read once, used to scale the magnetic field). Ours is 5.
+- **0x7F and 0x82 = serial number**, read together. **0x2E / 0x2F = version**, as already read.
+- **0x6A, 0x6B, 0x6C, 0x63 appear nowhere**, in any language. Still unexplained: 0x63,
+  0x66–0x68, 0x6A–0x70, 0x75. None written.
+- **No sample sets a connection interval, batching or output delay.** The only "interval" hits are
+  PC-side polling sleeps; the Unity Android plugin can ask the phone for a connection priority and
+  MTU, which we already know changes nothing. So the ~44 ms packing is probably fixed in firmware.
+- Not read: WitMotion's yuque protocol doc ("蓝牙5.0协议-姿态传感器"), which only renders in a
+  browser. Worth pasting its register table if someone opens it.
+
+**Firmware hack feasibility (public sources only).**
+
+- **Reading the image off the chip** needs the debug port. The nRF52832 can lock flash readback
+  (APPROTECT), and per Nordic's [docs](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/security/ap_protect.html)
+  the lock only clears with a full erase, which wipes the firmware. Whether WitMotion sets it is
+  unknown and needs a probe on the board. A 2020 [Black Hat talk](https://i.blackhat.com/eu-20/Wednesday/eu-20-LimitedResults-Debug-Resurrection-On-nRF52-Series.pdf)
+  covers bypassing it on the nRF52840; nothing found for the 52832. The USB-C cable can't reach flash.
+- **Installing a patched build over Bluetooth** depends on whether the bootloader checks
+  signatures. Unknown; `tools/wit_ble_gatt.py` would at least show whether an update service is
+  exposed (not yet run).
+- **Editing the batch setting** in a dump would mean finding the notification timer in nRF52 code,
+  assuming it's a simple constant. Possible but slow.
+- **Prior work:** no reverse-engineering write-up for the BWT901BLE5.0 found.
+- **So:** the realistic routes are still asking WitMotion and running the GATT listing.
+
 ## 2026-11-25: Wired sensor option (USB cable to a second phone)
 
 Plan: an old phone reads the sensor over its USB-C cable and plays the drum through its own audio
@@ -354,7 +391,8 @@ jack, which avoids the Bluetooth packing entirely.
   built for 32-bit ARM. Bluetooth still needs Android 13 and says so on older phones. Before
   Android 10, recordings aren't copied to Downloads (Share still works).
 - **Status:** `USB: … frames per read` should read ~1.00, with the ping (register round trip) a
-  few ms. Battery shows the supply instead (~5 V).
+  few ms. The battery register (0x64) read 515 over USB in the dump, so the status labels it
+  "supply" (5.15 V) on the wired link.
 - **Expected:** the detected sample arrives ~3 ms after it is measured, against 12–97 ms over
   Bluetooth. That leaves the detector (~30 ms from impact to the detected sample) and the old
   phone's audio output. Untested: needs the old phone, and a USB-C (or OTG) cable or adapter.
