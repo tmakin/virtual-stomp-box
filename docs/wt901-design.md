@@ -239,17 +239,11 @@ the full story is in [research-journal.md](research-journal.md)):
 | output: play → heard | **100 ms** | App buffer 10 ms; AudioTrack reports 79 ms. The rest is the Pixel speaker path (speaker protection DSP), even with the fast path granted. | Wired / USB-C output; AAudio/Oboe MMAP exclusive. Never Bluetooth audio (150–300 ms). |
 | total | **188 ms** | Exact (both ends are mic times). | |
 
-Early tests reported ~420 ms *detect*. That was a flaw in the meter, fixed in build #12: when the
-mic missed the impact, it took the previous stomp's drum for it, so *detect* read as the stomp
-period minus the output delay.
 
 ## Risks and open questions
 
-- **Can the link carry 200 Hz?** Each frame is a 20-byte notification, so 2–3 are needed per
-  11.25 ms connection event. The WitMotion parser expects 20-byte frames, and nothing documents how
-  many the module sends per event. The status line measures this.
-- **Sensor-internal delay** is assumed (about 3.5 ms) and cannot be read from the data. The
-  microphone recording measures the whole chain.
+- **The sensor's frame packing** (~8 frames per notification every ~44 ms at 200 Hz) puts the
+  impact in the data ~55 ms late. The link carries every frame; the packing is in the firmware.
 - **The bandwidth register mapping** may be off by one; the read-back shows which.
 - **Walking triggers notes.** The detector can't tell a stomp from a step. A mute switch in the
   app, or `gyroGateDps`, are the mitigations to try.
