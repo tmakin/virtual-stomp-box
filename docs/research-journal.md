@@ -27,7 +27,10 @@ What we know about the sensor and link:
   content (0x96), algorithm (0x24) and orientation (0x23). Below 50 Hz frames come one per
   notification, but no faster than 1 / rate (50 ms at 20 Hz), so that doesn't help either.
 - **The packing happens only on the Bluetooth side:** over the USB-C cable the same sensor sends
-  one frame every ~5 ms at 200 Hz (2026-11-25 test below).
+  one frame per sample at 200, 100 and 50 Hz, within ±0.3 ms (2026-11-25 tests below).
+- **Firmware:** no image is public. WitMotion's Android app can update sensors over Bluetooth
+  (Nordic DFU, from a file the user picks), so a WitMotion build could go on without opening the
+  sensor; our own patched build almost certainly can't (signed updates).
 - **The link is not the limit:** every frame arrives; Android reports a 15 ms connection interval
   with peripheral latency 1. Re-requesting connection priority changes nothing.
 - **Android 14+ negotiates a large MTU on connect**, so the app can't keep the 23-byte default
@@ -158,6 +161,73 @@ Bursts: 1987, samples per burst median 1 (max 62), gap median 5.1 ms, p95 5.3 ms
   is measured against the Mac's clock (Bluetooth gave 199.4 Hz).
 - **Firmware version registers:** 0x2E = 0x3337, 0x2F = 0x000A. How to decode them isn't known.
 
+## 2026-11-25: USB timing, register dump, firmware search (MacBook)
+
+**USB timing, redone.** The probe now flushes input and drops the first 0.5 s, so the start-up
+backlog no longer counts. 10 s per rate, `uv run tools/wit_usb_probe.py --rate N --csv ...`:
+
+```
+200 Hz: Samples: 1986 in 10.0 s = 198.7 Hz
+        Bursts: 1985, samples per burst median 1 (max 2), gap median 5.0 ms, p95 5.3 ms
+        Single-frame arrival interval (n=1982): median 5.03 ms, sd 0.17, p5 4.74, p95 5.29, max 5.92
+100 Hz: Samples: 993 in 10.0 s = 99.4 Hz
+        Bursts: 993, samples per burst median 1 (max 1), gap median 10.1 ms, p95 10.3 ms
+        Single-frame arrival interval (n=992): median 10.07 ms, sd 0.20, p5 9.81, p95 10.33, max 12.20
+ 50 Hz: Samples: 497 in 10.0 s = 49.8 Hz
+        Bursts: 497, samples per burst median 1 (max 1), gap median 20.1 ms, p95 20.4 ms
+        Single-frame arrival interval (n=496): median 20.14 ms, sd 0.15, p5 19.91, p95 20.38, max 20.77
+```
+
+- **One frame per sample at every rate, ±0.3 ms (p95).** The 62-frame burst and the 204.8 Hz in the
+  first run were the start-up backlog; the real rate is 198.7 Hz on the Mac's clock (Bluetooth on
+  the Pixel: 199.4 Hz).
+- **USB-serial latency is small:** a 20-byte frame takes 1.7 ms on the wire at 115200 baud, plus
+  ~1 ms of USB polling. So USB is a good reference clock for the sensor's own timing.
+
+**Register dump (reads only).** `--dump-registers` sends `FF AA 27 <reg> 00` for 0x00–0xFF, 100 ms
+apart; table in [wt901-register-dump-2026-11-25.csv](wt901-register-dump-2026-11-25.csv). Nothing
+was written apart from the rate.
+
+- **0x00–0x8F answer; 0x90–0xFF don't** (no reply at all). That includes 0x96, the documented
+  output-content register, so it is either Bluetooth-only or handled elsewhere.
+- **Known settings:** rate 0x03 (0x0008 = 50 Hz, left from the last run, not saved), gyro offsets
+  0x08–0x0A, mag ranges 0x1C–0x1E = 500, bandwidth 0x1F = 2, gyro range 0x20 = 3, accel range 0x21 = 3,
+  0x25 = 30, 0x2A = 500, 0x2D = 1, version 0x2E/0x2F.
+- **The Bluetooth name is in registers:** 0x12–0x16 read `WT 90 1B LE 68` as ASCII ("WT901BLE68").
+  These are the D0–D3 port registers on the wired WT901, so this firmware reuses them.
+- **Live data:** time 0x30–0x33, accel/gyro/mag/angle 0x34–0x3F, temperature 0x40, quaternion
+  0x51–0x54.
+- **Undocumented, 0x63–0x75:** 0x63 = 1000, 0x64 ≈ 515 (moves slightly; maybe a voltage),
+  0x66–0x68 fixed, **0x6A changes (1, 2, 3, 5)**, 0x6B = 200, **0x6C counts up ~100 per read** (a
+  ms timer), 0x6D/0x6E = 500, 0x6F = 300, 0x70 = 16, 0x72 = 5, 0x75 = 0x7000. 0x6A could be a queue
+  count; nothing here is clearly a Bluetooth packing setting, and none of it has been written.
+
+**Bluetooth from the Mac: not run.** macOS refuses Bluetooth to the editor running the tools
+("access denied by the user"). Two scripts are ready for when it's allowed (or from Terminal):
+`tools/wit_ble_gatt.py` (lists services, reads values, flags FE59 / legacy DFU / SMP; read-only) and
+`tools/wit_ble_vs_usb.py` (both links at once, frames matched by their 18 data bytes, reports
+Bluetooth minus USB delay per frame and per position in the notification). Expected from the
+numbers above: 0–44 ms per sample, sawtooth, ~20 ms on average plus the link.
+
+**Firmware search.** No BWT901BLE firmware image is public. Checked WitMotion's downloads page,
+GitHub (incl. the BLE 5.0 SDK repo), and the contents of both official bundles (listed and
+searched, nothing run):
+
+- **Android app 5.1.3** includes Nordic's DFU library (`no.nordicsemi.android.dfu`, via the
+  `nordic_dfu` Flutter plugin) and a "DFU firmware upgrade" screen ("Entered OTA mode", looks for
+  `DfuTarg`, the nRF52 bootloader's name). No image is bundled and no download URL is built in: it
+  loads a file the user picks. The App Store history adds this in 5.0.3 (Dec 2023) for the
+  WT9011DCL-BT50; whether it covers our model isn't known.
+- **PC software V2025.11.26.0:** "Firmware Upgrade" and "OTA Upgrade" windows also load a chosen
+  file. The bundled images are for other products: STM32 .hex files (load address 0x08000000) for
+  an evaluation board, and ESP8266 .bin files for the WiFi model. Its self-updater points at
+  `upgrade.wit-motion.cn:7676` (app updates; not contacted).
+- **So:** WitMotion hands firmware out per customer. A WitMotion build could likely go on over
+  Bluetooth with their app, no case opening. With Nordic Secure DFU it must be signed by them, so
+  our own patched build almost certainly can't. Reading the image over USB isn't possible: the
+  cable only reaches the register protocol, and reading flash needs SWD, which production nRF52s
+  usually lock.
+
 ## Open questions
 
 - **USB-C into an amp:** how much of the 100 ms output goes? Then AAudio/Oboe exclusive mode, if
@@ -173,10 +243,11 @@ Bursts: 1987, samples per burst median 1 (max 62), gap median 5.1 ms, p95 5.3 ms
   - **Reflash it ourselves:** possible over SWD after a full erase (the original firmware is lost).
     It means writing all the firmware and tracing the board's pins: the same job as the XIAO
     firmware on worse hardware, so not worth it.
-  - **Cheap test first:** read the USB-C wired output from the phone. If its frames come one at a
-    time, that confirms the ~44 ms packing is only on the Bluetooth side and shows the delay
-    custom firmware could save. `tools/wit_usb_probe.py` does this from a Mac or PC (and reads the
-    firmware version). WitMotion's update tool is Windows-only; nRF Connect on the phone shows
-    whether the sensor has a Bluetooth update service.
+  - **Done:** the USB-C output is one frame per sample, so the packing is Bluetooth-only. No
+    firmware image is public; WitMotion's app updates over Bluetooth from a file they supply.
+  - **Next:** does our sensor list the FE59 update service (app tuning screen, or
+    `tools/wit_ble_gatt.py`)? Then ask WitMotion for a build without the ~44 ms packing.
+  - **Measure the exact Bluetooth delay** with `tools/wit_ble_vs_usb.py` once the Mac allows
+    Bluetooth (or from Terminal).
 - **A faster sensor:** the WT901's ~44 ms packing is the floor for this sensor. On-sensor detection
   over BLE (the XIAO firmware, PR #5) should give ~10–15 ms sensor → phone; see issue #4.
