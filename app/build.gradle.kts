@@ -23,7 +23,11 @@ android {
         val built = ZonedDateTime.now(ZoneOffset.UTC)
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'"))
         buildConfigField("String", "BUILD_LABEL", "\"#$versionCode $sha $built\"")
+        // Native AAudio engine (src/main/cpp): 64-bit ARM only, which every current Pixel is.
+        ndk { abiFilters += "arm64-v8a" }
     }
+
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
 
     // A fixed debug key checked into the repo, so APKs built on different CI runners can be
     // installed over each other. It signs test builds only; never use it for a store release.

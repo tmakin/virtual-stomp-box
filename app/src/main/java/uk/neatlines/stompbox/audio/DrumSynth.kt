@@ -29,9 +29,22 @@ import kotlin.random.Random
  *
  * Buffer tuning, as Oboe does it: the buffer starts small and grows by one burst whenever the
  * track underruns, so each device settles at the smallest buffer it can keep fed.
+ *
+ * Two engines ([engine], saved): AUDIOTRACK (Java, Android's mixer) and AAUDIO, a native AAudio
+ * stream asking for exclusive (MMAP) mode, which skips the mixer where the device supports it
+ * (Pixel speaker; usually not USB, where it falls back to shared).
  */
 class DrumSynth(context: Context) : StompOutput {
     @Volatile var muted = false
+
+    enum class Engine { AUDIOTRACK, AAUDIO }
+    private val prefs = context.getSharedPreferences("stomp", Context.MODE_PRIVATE)
+    @Volatile var engine: Engine = runCatching { Engine.valueOf(prefs.getString("audioEngine", null)!!) }.getOrDefault(Engine.AUDIOTRACK)
+        set(v) { field = v; prefs.edit().putString("audioEngine", v.name).apply(); rebuild = true }
+    /** The AAudio stream is open and playing (sounds go to it instead of the AudioTrack). */
+    @Volatile private var aaudioOpen = false
+    /** AAudio granted exclusive (MMAP) mode; false means it fell back to shared. */
+    @Volatile var exclusiveGranted = false; private set
 
     private val am = context.getSystemService(AudioManager::class.java)
     private val rate = 48_000      // native on Pixels and on almost every USB interface
@@ -62,7 +75,11 @@ class DrumSynth(context: Context) : StompOutput {
     @Volatile var deviceLabel = label(null); private set
 
     /** One line for the status screens. */
-    fun summary() = "$deviceLabel, buffer %.1f ms, output latency %.0f ms, fast path %s, underruns %d".format(
+    fun summary() = if (engine == Engine.AAUDIO)
+        "$deviceLabel, AAudio %s, buffer %.1f ms, output latency %.0f ms, underruns %d".format(
+            if (!aaudioOpen) "NOT OPEN" else if (exclusiveGranted) "exclusive (MMAP)" else "shared (exclusive refused)",
+            bufferMs, outputLatencyMs, underruns)
+    else "$deviceLabel, AudioTrack, buffer %.1f ms, output latency %.0f ms, fast path %s, underruns %d".format(
         bufferMs, outputLatencyMs, if (lowLatencyGranted) "yes" else "NO", underruns)
 
     @Volatile private var wanted: AudioDeviceInfo? = null
@@ -83,7 +100,9 @@ class DrumSynth(context: Context) : StompOutput {
         if (muted) return
         val data = when (note) { 36 -> kick; 38 -> snare; else -> click }
         val v = velocity / 127f
-        pending += Voice(data, 0.15f + 0.85f * v * v)
+        val gain = 0.15f + 0.85f * v * v
+        if (aaudioOpen) AAudioDrum.nativePlay(when (note) { 36 -> 0; 38 -> 1; else -> 2 }, gain)
+        else pending += Voice(data, gain)
     }
 
     /** Prefer an external output: USB first, then wired / line. Null means the default (speaker). */
@@ -119,8 +138,33 @@ class DrumSynth(context: Context) : StompOutput {
         var track: AudioTrack? = null
         var written = 0L
         var checks = 0
+        var aaudioLoaded = false
+        val info = DoubleArray(8)
         while (true) {
-            if (rebuild) {
+            if (engine == Engine.AAUDIO) {
+                if (track != null) { runCatching { track!!.pause(); track!!.flush(); track!!.release() }; track = null }
+                if (!aaudioLoaded) {
+                    AAudioDrum.nativeLoad(0, kick); AAudioDrum.nativeLoad(1, snare); AAudioDrum.nativeLoad(2, click)
+                    aaudioLoaded = true
+                }
+                val stale = aaudioOpen && AAudioDrum.nativeInfo(info) && info[7] != 0.0   // device gone
+                if (rebuild || stale || !aaudioOpen) {
+                    rebuild = false
+                    aaudioOpen = false
+                    aaudioOpen = AAudioDrum.nativeOpen(wanted?.id ?: 0, true)
+                    underruns = 0; outputLatencyMs = Double.NaN
+                    if (!aaudioOpen) { Thread.sleep(1000); continue }
+                }
+                AAudioDrum.info()?.let { i ->
+                    exclusiveGranted = i.exclusive; bufferMs = i.bufferMs; underruns = i.xruns
+                    if (!i.latencyMs.isNaN()) outputLatencyMs = i.latencyMs
+                    deviceLabel = label(am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { it.id == i.deviceId })
+                }
+                Thread.sleep(100)
+                continue
+            }
+            if (aaudioOpen) { aaudioOpen = false; AAudioDrum.nativeClose(); rebuild = true }
+            if (rebuild || track == null) {
                 rebuild = false
                 track?.let { runCatching { it.pause(); it.flush(); it.release() } }
                 val device = wanted

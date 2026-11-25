@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(aaudiodrum CXX)
+add_library(aaudiodrum SHARED aaudio_drum.cpp)
+target_compile_features(aaudiodrum PRIVATE cxx_std_17)
+target_link_libraries(aaudiodrum aaudio log)

@@ -19,6 +19,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import uk.neatlines.stompbox.StompApp
+import uk.neatlines.stompbox.audio.DrumSynth
 import uk.neatlines.stompbox.latency.LatencyMeter
 import uk.neatlines.stompbox.stomp.Feature
 import uk.neatlines.stompbox.stomp.Mode
@@ -108,6 +109,10 @@ class StompTuningActivity : Activity() {
                 engine.rateHz = r[(r.indexOf(engine.rateHz) + 1) % r.size]
             },
         ))
+        val synth = (application as StompApp).synth
+        col.addView(cycler({ "Audio engine: ${if (synth.engine == DrumSynth.Engine.AAUDIO) "AAudio (MMAP)" else "AudioTrack"}" }) {
+            synth.engine = if (synth.engine == DrumSynth.Engine.AAUDIO) DrumSynth.Engine.AUDIOTRACK else DrumSynth.Engine.AAUDIO
+        })
         col.addView(button("Calibrate: stand still for 1 s") { b ->
             b.text = "hold still…"
             engine.calibrateRest { runOnUiThread { b.text = "Calibrate: stand still for 1 s ✓" } }
