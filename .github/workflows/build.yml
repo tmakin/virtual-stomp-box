@@ -1,0 +1,49 @@
+name: Build test APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to publish the APK as a release
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests and debug APK
+        run: ./gradlew :core:test :app:assembleDebug --stacktrace
+
+      - name: Keep the APK as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stompbox-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      # One rolling pre-release per branch, e.g. "apk-main". Open it in the phone's browser
+      # and tap the .apk to install or update.
+      - name: Publish APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="apk-${GITHUB_REF_NAME//\//-}"
+          # Run number, UTC build time and commit in the file name, matching the app's status line.
+          APK="stompbox-${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$APK"
+          # Same file under a fixed name, so one bookmarked link always gets the newest build.
+          cp "$APK" stompbox-latest.apk
+          gh release delete "$TAG" --cleanup-tag --yes || true
+          gh release create "$TAG" "$APK" stompbox-latest.apk --prerelease --target "$GITHUB_SHA" \
+            --title "Stomp Box test build: $GITHUB_REF_NAME #$GITHUB_RUN_NUMBER" \
+            --notes "Debug build of ${GITHUB_SHA::7} from $GITHUB_REF_NAME. On the phone: tap $APK, then Install (or Update). The app's status line shows the same build number and commit."

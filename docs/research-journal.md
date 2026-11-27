@@ -1,0 +1,473 @@
+# Research journal: WT901 stomp sensor
+
+Tests on the real hardware, what they showed and what changed. The summary below is the current
+state; the log under it is newest at the bottom. Design background is in
+[wt901-design.md](wt901-design.md); the next sensor is discussed in issue #4.
+
+**Setup:** WitMotion BWT901BLE5.0 (advertises as `WT901BLE68`) on the shoe, Google Pixel 8a,
+Android 17, test app from the `apk-ccr-485f9f1f-a1qz3d` release.
+
+## Current state
+
+Latency, measured with the live latency test (mic hears the impact and the drum), 200 Hz, single
+stomps 2 s apart, phone speaker (build #13):
+
+| Part | Measured | Made of |
+|---|---|---|
+| detect: impact → detected | **86 ms** | ~55 ms until the impact shows in the data, then ~30 ms (about one more notification) until the detector fires |
+| output: play → heard | **100 ms** | AudioTrack reports 79 ms with the fast path granted; the rest is the Pixel speaker path. **Now 23 ms** with AAudio exclusive on the USB-C adapter (2026-11-25, build #34) |
+| total | **188 ms** | exact: both ends are mic times |
+
+What we know about the sensor and link:
+
+- **The sensor packs frames on its own ~44 ms timer:** 8 frames per notification at 200 Hz,
+  2 at 50 Hz (2026-11-25 recording; the older "5 at 100 Hz" wasn't kept as raw data), one notification
+  every ~44 ms on average, often as a pair (~80 ms gap, then ~1 ms). This sets the ~55 ms and can't be
+  changed from the phone. Other users see the same (~40 ms, 4 frames at 100 Hz). WitMotion's SDK
+  and protocol notes have no register for it: only rate (0x03), filter bandwidth (0x1F), output
+  content (0x96), algorithm (0x24) and orientation (0x23). Below 50 Hz frames come one per
+  notification, but no faster than 1 / rate (50 ms at 20 Hz), so that doesn't help either.
+- **The packing happens only on the Bluetooth side:** over the USB-C cable the same sensor sends
+  one frame per sample at 200, 100 and 50 Hz, within ±0.3 ms (2026-11-25 tests below).
+- **Firmware:** no image is public. WitMotion's Android app can update sensors over Bluetooth
+  (Nordic DFU, from a file the user picks), so a WitMotion build could go on without opening the
+  sensor; our own patched build almost certainly can't (signed updates).
+- **The link is not the limit:** every frame arrives; Android reports a 15 ms connection interval
+  with peripheral latency 1. Re-requesting connection priority changes nothing.
+- **Android 14+ negotiates a large MTU on connect**, so the app can't keep the 23-byte default
+  (the frame packing stays the same either way).
+- **Register-read round trip ("ping"):** about 80–110 ms median.
+- **The WitMotion app** shows no perceptible lag on its live graph, consistent with the above.
+
+## 2026-11-23: First install
+
+- The app installs, connects and plays a sound on each stomp.
+- **Feedback:** bottom buttons under the navigation bar; keep to a single stomp (no heel / toe);
+  no obvious way to export a recording.
+- **Changes:**
+  - Both screens pad for the system bars (edge to edge on Android 15+).
+  - Heel/toe zones off (`zonesEnabled = false`), their UI removed.
+  - **Live latency test** (`LatencyMeter`): splits each stomp into *detect*, *output* and *total*.
+  - Sensor-rate setting (200 / 100 / 50 Hz), with a warning when the link drops frames.
+  - Recordings copied to `Download/StompBox/`; **Copy status** and **Share last recording**.
+  - The kick got a click attack, so it's audible on a phone speaker and the mic catches it.
+
+## 2026-11-24: Link and audio measurements
+
+Measured across 200, 100 and 50 Hz, with several link settings (connection priority, MTU, PHY):
+
+- All frames arrive at every rate. The sensor packs frames into one notification every ~44 ms,
+  whatever the connection interval, MTU or PHY.
+- The audio fast path is granted, but output is still ~100 ms by mic (74–79 ms by AudioTrack
+  timestamp): the Pixel speaker path adds the rest.
+- **Changes:** the status shows the connection parameters the stack reports (via the hidden
+  `onConnectionUpdated` callback), frames per notification, the ping, the measured audio output
+  latency and whether the fast path was granted. The latency test also reports *first jolt*: when
+  the impact first shows in the sensor data.
+
+## 2026-11-24: Latency meter fix
+
+- **Bug:** when the mic missed an impact, `LatencyMeter` paired the stomp with the previous stomp's
+  drum, so *detect* read as the stomp period minus the output delay (~400 ms at the tester's ~2
+  stomps a second). All latency figures before this fix were wrong and have been dropped.
+- **Fix:** an impact must come after the previous stomp's drum (plus 80 ms of ringing). A stomp
+  with no impact heard is counted, not scored, and the summary shows the count. Unit tests cover a
+  500 ms rhythm with and without the impacts heard.
+- **Silent pacer:** the tuning screen flashes **STOMP** every 2 s during the latency test (visual
+  only, so the mic isn't confused).
+
+## 2026-11-24: Latency test (build #13 `276c684`)
+
+```
+BLE (MTU 247, 2M PHY, MTU 247): interval 15.00 ms, peripheral latency 1, 8.00 frames/notification
+ping (register read round trip): median 112 ms, min 41, max 185 (n=18)
+rate 199.4 Hz, 8.85 frames/event, interval median 44.72 ms p95 77.90, lag median 40.4 p95 81.7 max 108.6 ms
+audio: buffer 10.0 ms, output latency 79 ms, fast path yes
+latency: median of 11: detect 86 ms · output 100 ms · total 188 ms
+impact in sensor data: first jolt at 55 ms, max 2.59 g
+```
+
+- Every stomp was paired (none unheard). The breakdown is in **Current state** above.
+- The ~30 ms from first jolt to detection is about one notification: the first sample over 0.5 g is
+  in one burst, and the 1.2 g threshold is crossed in the next. A detector lever.
+
+## 2026-11-24: Cleanup, USB audio, stall hunt
+
+Feedback: remove the experiment code; optimise the audio output for USB-C (next test is through
+an amp); the app stalls intermittently; cap the threshold slider at 2.0 g; default to the
+lowest-latency settings.
+
+- **Removed** the experiment code (sensor-queue flush, link-mode setting, 10 Hz rate, repeated
+  connection-priority requests). The ping stays, every 5 s.
+- **Possible causes of stalls, found in the code and fixed:**
+  - The automatic flush stopped the data for 2.5 s after every connect, including reconnects.
+  - **Timers piled up on reconnect:** the battery poll and ping were never cancelled when the link
+    dropped.
+  - **Colliding BLE writes:** Android takes one GATT write at a time and refuses the rest. All
+    writes now go through one queue, each waiting for the previous one's reply.
+  - **Recording wrote to disk on the Bluetooth callback thread.** It now runs on its own thread.
+- **Stall diagnostics:** a `stalls:` status line with BLE gaps over 250 ms (and the longest),
+  reconnects, failed writes and UI freezes over 200 ms. The `audio:` line counts underruns.
+- **USB / wired audio:** the drum synth uses a USB interface, USB-C headphones or a wired / line
+  output as soon as one is plugged in. 48 kHz stereo; the buffer starts at two bursts and grows by
+  one burst on each underrun. The `audio:` line names the device.
+- **Threshold slider:** 0.2–2.0 g in 0.02 g steps.
+- **Defaults:** VERTICAL feature, IMMEDIATE timing, no peak wait, no gyro gate; 200 Hz, 2M PHY,
+  MTU 247, connection priority HIGH.
+
+## 2026-11-25: Code tidy-up (no change to the latency path)
+
+- **UI freeze watch:** a 10 Hz main-thread heartbeat (was a per-frame callback), started and
+  stopped automatically as screens come and go.
+- **One gap counter** (`GapCounter`, unit-tested) for BLE gaps and UI freezes.
+- **Audio:** the device name follows Android's routing callback, and names wherever the sound
+  actually goes, including the speaker.
+- **Recording:** the log writer and its thread are one object (fixes a race with stop).
+- **Settings:** a saved threshold over 2.0 g is capped on load; a saved rate no longer offered
+  falls back to 200 Hz.
+
+## 2026-11-25: Review fixes (BLE writes, one connection, latency pairing)
+
+Found in code review; not yet tried on hardware.
+
+- **Refused BLE writes are retried**, not dropped: back to the front of the queue, every 50 ms for
+  up to ~1 s. A dropped UNLOCK or SAVE could leave the sensor half-configured. A reply that comes
+  after its write timed out, or from an old connection, is ignored (it used to cancel the next
+  write's timeout). `failed writes` now counts only timeouts and writes finally given up.
+- **One connection at a time:** the scan connects to the first result only; `start()` does nothing
+  while running; the Connect button asks the engine, so a recreated home screen (dark-mode switch,
+  font size, split screen) can't start a second connection. Callbacks and timers from a replaced
+  connection are ignored.
+- **Latency meter, no drum heard:** the next stomp's impact was taken for this stomp's drum, so the
+  next stomp went unpaired (sound off, fast stomping: 1 of 6 measured). Between play() and the
+  next detection, two sounds are now drum then impact; a lone sound is whichever it's nearer.
+  Unit-tested. The 2 s pacer hid this in the tests so far.
+
+## 2026-11-25: USB-C probe (`tools/wit_usb_probe.py`, MacBook)
+
+```
+Opened /dev/cu.usbserial-110 at 115200
+Frames seen: {'ble': 2048, 'reply': 1}
+Firmware version registers: 0x2E = 0x3337, 0x2F = 0x000A
+Samples: 2048 in 10.0 s = 204.8 Hz
+Bursts: 1987, samples per burst median 1 (max 62), gap median 5.1 ms, p95 5.3 ms
+```
+
+- **The USB-C port carries data** through a CH340 USB-serial chip (macOS's built-in driver), using
+  the same 20-byte `55 61` frames as Bluetooth. It accepts commands: the rate write and a register
+  read both worked.
+- **Frames arrive one at a time, ~5 ms apart.** The ~44 ms batching happens only on the Bluetooth
+  side, so patched firmware (or a wired connection) could save most of the ~55 ms.
+- One burst of 62 frames, probably the read loop starting late or a pause on the Mac. The 204.8 Hz
+  is measured against the Mac's clock (Bluetooth gave 199.4 Hz).
+- **Firmware version registers:** 0x2E = 0x3337, 0x2F = 0x000A. How to decode them isn't known.
+
+## 2026-11-25: USB timing, register dump, firmware search (MacBook)
+
+**USB timing, redone.** The probe now flushes input and drops the first 0.5 s, so the start-up
+backlog no longer counts. 10 s per rate, `uv run tools/wit_usb_probe.py --rate N --csv ...`:
+
+```
+200 Hz: Samples: 1986 in 10.0 s = 198.7 Hz
+        Bursts: 1985, samples per burst median 1 (max 2), gap median 5.0 ms, p95 5.3 ms
+        Single-frame arrival interval (n=1982): median 5.03 ms, sd 0.17, p5 4.74, p95 5.29, max 5.92
+100 Hz: Samples: 993 in 10.0 s = 99.4 Hz
+        Bursts: 993, samples per burst median 1 (max 1), gap median 10.1 ms, p95 10.3 ms
+        Single-frame arrival interval (n=992): median 10.07 ms, sd 0.20, p5 9.81, p95 10.33, max 12.20
+ 50 Hz: Samples: 497 in 10.0 s = 49.8 Hz
+        Bursts: 497, samples per burst median 1 (max 1), gap median 20.1 ms, p95 20.4 ms
+        Single-frame arrival interval (n=496): median 20.14 ms, sd 0.15, p5 19.91, p95 20.38, max 20.77
+```
+
+- **One frame per sample at every rate, ±0.3 ms (p95).** The 62-frame burst and the 204.8 Hz in the
+  first run were the start-up backlog; the real rate is 198.7 Hz on the Mac's clock (Bluetooth on
+  the Pixel: 199.4 Hz).
+- **USB-serial latency is small:** a 20-byte frame takes 1.7 ms on the wire at 115200 baud, plus
+  ~1 ms of USB polling. So USB is a good reference clock for the sensor's own timing.
+
+**Register dump (reads only).** `--dump-registers` sends `FF AA 27 <reg> 00` for 0x00–0xFF, 100 ms
+apart; table in [wt901-register-dump-2026-11-25.csv](wt901-register-dump-2026-11-25.csv). Nothing
+was written apart from the rate.
+
+- **0x00–0x8F answer; 0x90–0xFF don't** (no reply at all). That includes 0x96, the documented
+  output-content register, so it is either Bluetooth-only or handled elsewhere.
+- **Known settings:** rate 0x03 (0x0008 = 50 Hz, left from the last run, not saved), gyro offsets
+  0x08–0x0A, mag ranges 0x1C–0x1E = 500, bandwidth 0x1F = 2, gyro range 0x20 = 3, accel range 0x21 = 3,
+  0x25 = 30, 0x2A = 500, 0x2D = 1, version 0x2E/0x2F.
+- **The Bluetooth name is in registers:** 0x12–0x16 read `WT 90 1B LE 68` as ASCII ("WT901BLE68").
+  These are the D0–D3 port registers on the wired WT901, so this firmware reuses them.
+- **Live data:** time 0x30–0x33, accel/gyro/mag/angle 0x34–0x3F, temperature 0x40, quaternion
+  0x51–0x54.
+- **Undocumented, 0x63–0x75** (0x64 and 0x72 are explained in the next entry): 0x63 = 1000, 0x64 ≈ 515 (moves slightly; battery),
+  0x66–0x68 fixed, **0x6A changes (1, 2, 3, 5)**, 0x6B = 200, **0x6C counts up ~100 per read** (a
+  ms timer), 0x6D/0x6E = 500, 0x6F = 300, 0x70 = 16, 0x72 = 5, 0x75 = 0x7000. 0x6A could be a queue
+  count; nothing here is clearly a Bluetooth packing setting, and none of it has been written.
+
+**Bluetooth from the Mac: not run.** macOS refuses Bluetooth to the editor running the tools
+("access denied by the user"). Two scripts are ready for when it's allowed (or from Terminal):
+`tools/wit_ble_gatt.py` (lists services, reads values, flags FE59 / legacy DFU / SMP; read-only) and
+`tools/wit_ble_vs_usb.py` (both links at once, frames matched by their 18 data bytes, reports
+Bluetooth minus USB delay per frame and per position in the notification). Expected from the
+numbers above: 0–44 ms per sample, sawtooth, ~20 ms on average plus the link.
+
+**Firmware search.** No BWT901BLE firmware image is public. Checked WitMotion's downloads page,
+GitHub (incl. the BLE 5.0 SDK repo), and the contents of both official bundles (listed and
+searched, nothing run):
+
+- **Android app 5.1.3** includes Nordic's DFU library (`no.nordicsemi.android.dfu`, via the
+  `nordic_dfu` Flutter plugin) and a "DFU firmware upgrade" screen ("Entered OTA mode", looks for
+  `DfuTarg`, the nRF52 bootloader's name). No image is bundled and no download URL is built in: it
+  loads a file the user picks. The App Store history adds this in 5.0.3 (Dec 2023) for the
+  WT9011DCL-BT50; whether it covers our model isn't known.
+- **PC software V2025.11.26.0:** "Firmware Upgrade" and "OTA Upgrade" windows also load a chosen
+  file. The bundled images are for other products: STM32 .hex files (load address 0x08000000) for
+  an evaluation board, and ESP8266 .bin files for the WiFi model. Its self-updater points at
+  `upgrade.wit-motion.cn:7676` (app updates; not contacted).
+- **So:** WitMotion hands firmware out per customer. A WitMotion build could likely go on over
+  Bluetooth with their app, no case opening. With Nordic Secure DFU it must be signed by them, so
+  our own patched build almost certainly can't. Reading the image over USB isn't possible: the
+  cable only reaches the register protocol, and reading flash needs SWD, which production nRF52s
+  usually lock.
+
+## 2026-11-25: USB-C to 3.5 mm adapter (build #24 `422448d`)
+
+The Pixel's audio went through a USB-C to 3.5 mm adapter (`USB-Audio - KM_B2 AUX`) into an amp.
+Recording with the mic, 14 stomps:
+
+```
+audio: USB audio 'USB-Audio - KM_B2 AUX', buffer 10.0 ms, output latency 69 ms, fast path yes, underruns 0
+sensor: 199.7 Hz, 8 frames in every notification, gap median 41.9 ms, p95 78.2 ms
+output (drum fired -> heard): median ~103 ms, range 98-113 ms (14 of 14)
+detect: only 1 of 14 impacts heard by the mic (63 ms; total 167 ms)
+```
+
+- **The USB-C adapter is no faster than the speaker:** ~103 ms by mic against 100 ms on the
+  speaker, though Android reports 69 ms (79 ms on the speaker). Android's audio path on this phone
+  sets the floor, not the speaker.
+- **Bluetooth batching unchanged:** 8 frames per notification, ~42 ms apart.
+- **The mic missed most impacts:** put the phone nearer the foot to measure detect.
+
+## 2026-11-25: AAudio exclusive (MMAP) engine (`7817fe7`)
+
+- **Change:** an **Audio engine** setting on the tuning screen: AudioTrack (as before) or a native
+  AAudio stream that asks for exclusive (MMAP) mode, which skips Android's mixer. The `audio:`
+  line says whether exclusive was granted.
+- **First result:** exclusive is granted on the USB-C to 3.5 mm adapter (`KM_B2 AUX`), not only on
+  the speaker. Status (build #31):
+
+  ```
+  audio: USB audio 'USB-Audio - KM_B2 AUX', AAudio exclusive (MMAP), buffer 4.0 ms, output latency 6 ms, underruns 0
+  latency: no stomps measured yet (7 with no impact heard)
+  ```
+
+  Android now reports 6 ms output latency against 69 ms with AudioTrack, and a 4 ms buffer with no
+  underruns. That's Android's own estimate; checked by mic below.
+- **Latency test fix:** with the mic by the amp it heard only the drums, and the test dropped any
+  stomp with no impact heard, output figure included. It now keeps those as a separate
+  "drums heard with no impact: output median …" line.
+
+## 2026-11-25: AAudio exclusive on USB-C, measured (build #34 `99d4fd6`)
+
+Mic at the amp's speaker, USB-C to 3.5 mm adapter, AAudio exclusive:
+
+```
+audio: USB audio 'USB-Audio - KM_B2 AUX', AAudio exclusive (MMAP), buffer 4.0 ms, output latency 8 ms, underruns 0
+drums heard with no impact: output median 23 ms, range 20-27 ms (9)
+last: detect 99 ms · output 24 ms · total 123 ms
+stalls: BLE gaps 0 >250 ms (longest 185 ms), reconnects 52, failed writes 1
+```
+
+- **Output is 23 ms by mic, down from ~103 ms with AudioTrack:** about 80 ms saved. Android's
+  figure (8 ms) is ~15 ms low, against ~30 ms low with AudioTrack.
+- **The sensor link is now most of the delay:** total for the one impact heard well was 123 ms,
+  of which detect was 99 ms.
+- The "median of 2: detect 393 ms" is one mispaired stomp, not a real figure (mic far from the foot).
+- **52 reconnects** in this session, against 0 before. Cause unknown; not yet looked at.
+
+## 2026-11-25: Recording with the mic on, USB-C adapter (`stomp-20261125-093609`)
+
+11 stomps in 12.8 s, 200 Hz, 8 frames in every notification. The log doesn't say which audio
+engine was on (fixed below).
+
+```
+sensor: 199.2 Hz, 8 frames in every notification, gap median 42.8 ms, p95 79.7 ms, max 93 ms
+mic onsets: 3, all impacts (none of the drum sounds)
+detect (impact heard -> drum fired): 116, 54, 63 ms
+detected sample -> fired: 12-97 ms, median 37 ms
+```
+
+- **No output figure:** the mic heard none of the drums through the amp, so output latency can't
+  be read from this file. Use the latency test, or put the phone's mic by the amp's speaker.
+- **Notifications often come in pairs:** gaps alternate ~78 ms and ~4 ms, so 16 frames land at
+  once. This is the p95 of ~80 ms seen in every recording, and why the detect time swings
+  (54-116 ms): an impact that just misses a notification waits up to ~80 ms.
+- **Change:** recordings now log the audio engine line (`audio=` in `# info`).
+
+## 2026-11-25: First-burst check on the two USB-C recordings
+
+From the samples alone, no mic needed: the first sample with a jolt of 0.5 g or more, against the
+burst the detector fired on. Threshold 0.5 g (it was 1.2 g when the ~30 ms was measured).
+
+```
+stomp-20261125-090412: 14 stomps, 11 fired in the first jolt's burst
+stomp-20261125-093609: 11 stomps,  9 fired in the first jolt's burst
+the 5 that waited: first jolt was frame 8 of 8, the last in its burst; they fired one
+notification later (2-78 ms)
+```
+
+- **At 0.5 g the detector already fires on the first burst** for 20 of 25 stomps. The ~30 ms
+  gap measured at 1.2 g is mostly gone.
+- **What's left:** a jolt in the last frame of a burst is a single sample, so the detector waits
+  for the next one. Firing on that one sample saves one notification on about 1 stomp in 5, but
+  risks false triggers. Checking that needs recordings of non-stomp movement.
+
+## 2026-11-25: STEADY delay for the batched link
+
+Feedback: the uneven timing makes it hard to play music with.
+
+Detected sample → arrival in the two USB-C recordings (25 stomps, IMMEDIATE): 12–97 ms, median 38 ms.
+With STEADY, a stomp later than the steady delay plays on arrival, so it jitters again:
+
+```
+steady delay  60 ms: 7 of 25 late
+steady delay  80 ms: 2 of 25 late
+steady delay 100 ms: 0 of 25 late
+```
+
+- **Change:** the steady delay slider now goes to 150 ms (was 60), and the default is 100 ms
+  (was 25, chosen for a link that sends one frame per notification).
+- **Expected at 100 ms:** a constant ~150 ms from impact to drum (the detected sample is ~30 ms
+  after the impact by mic, plus 100 ms, plus 23 ms output), against 80–180 ms with IMMEDIATE.
+  Not yet tried by ear.
+
+## 2026-11-25: Register 0x6A and firmware hack feasibility (web search, MacBook)
+
+Searched the web and read WitMotion's public sample code for anything on the undocumented
+registers, and for whether the firmware could be hacked. Nothing was written to the sensor.
+
+**Registers.** WitMotion's [BLE 5.0 protocol page](https://wit-motion.gitbook.io/witmotion-sdk/ble-5.0-protocol/bluetooth-5.0-communication-protocol)
+has a register table that stops at 0x54 and says nothing about connection interval, packing or
+delay. The samples in [WitBluetooth_BWT901BLE5_0](https://github.com/WITMOTION/WitBluetooth_BWT901BLE5_0)
+(Android, iOS, Windows, Unity, Python; 349 source files, grepped, nothing run) explain a few
+registers we saw in the dump:
+
+- **0x64 = battery** (comment "电量"; the protocol page's example read is 0x0348 = 840).
+- **0x72 = magnetometer type** (read once, used to scale the magnetic field). Ours is 5.
+- **0x7F and 0x82 = serial number**, read together. **0x2E / 0x2F = version**, as already read.
+- **0x6A, 0x6B, 0x6C, 0x63 appear nowhere**, in any language. Still unexplained: 0x63,
+  0x66–0x68, 0x6A–0x70, 0x75. None written.
+- **No sample sets a connection interval, batching or output delay.** The only "interval" hits are
+  PC-side polling sleeps; the Unity Android plugin can ask the phone for a connection priority and
+  MTU, which we already know changes nothing. So the ~44 ms packing is probably fixed in firmware.
+- Not read: WitMotion's yuque protocol doc ("蓝牙5.0协议-姿态传感器"), which only renders in a
+  browser. Worth pasting its register table if someone opens it.
+
+**Firmware hack feasibility (public sources only).**
+
+- **Reading the image off the chip** needs the debug port. The nRF52832 can lock flash readback
+  (APPROTECT), and per Nordic's [docs](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/security/ap_protect.html)
+  the lock only clears with a full erase, which wipes the firmware. Whether WitMotion sets it is
+  unknown and needs a probe on the board. A 2020 [Black Hat talk](https://i.blackhat.com/eu-20/Wednesday/eu-20-LimitedResults-Debug-Resurrection-On-nRF52-Series.pdf)
+  covers bypassing it on the nRF52840; nothing found for the 52832. The USB-C cable can't reach flash.
+- **Installing a patched build over Bluetooth** depends on whether the bootloader checks
+  signatures. Unknown; `tools/wit_ble_gatt.py` would at least show whether an update service is
+  exposed (not yet run).
+- **Editing the batch setting** in a dump would mean finding the notification timer in nRF52 code,
+  assuming it's a simple constant. Possible but slow.
+- **Prior work:** no reverse-engineering write-up for the BWT901BLE5.0 found.
+- **So:** the realistic routes are still asking WitMotion and running the GATT listing.
+
+## 2026-11-25: 50 Hz over Bluetooth (`stomp-20261125-234256`)
+
+Question: does 50 Hz send each reading on its own (below ~50 Hz frames come one per
+notification), which would cut the wait inside the sensor? 11 stomps, IMMEDIATE, mic on, sound
+off. Compared with the two 200 Hz recordings of the same day:
+
+```
+                                   50 Hz                     200 Hz
+frames per notification            2 (all 387)               8 (all)
+notification gap                   median 44, p5 0.7, p95 78 median 42, p5 1.1, p95 78-80 ms
+impact (mic) → detected, arrival   median 61, 37-101 (n=10)  median 63, 54-116 (n=4)
+```
+
+- **No:** 50 Hz still batches (2 frames per notification) and keeps the same pairs: ~80 ms, then
+  a second notification ~1 ms later. A reading can wait up to ~80 ms at either rate.
+- **Impact → detection is the same** (61 against 63 ms median; few 200 Hz stomps had a mic onset).
+  At 50 Hz every stomp fired on the first notification with a jolt over 0.5 g.
+- **The sample clock is off at 50 Hz:** it puts the detected sample 8–22 ms *before* the impact,
+  so the "detected sample → arrival" figure (78 ms) is too high. It assumes some frames arrive
+  with almost no delay, which batches of 20 ms frames don't give. STEADY timing would be off by
+  as much at 50 Hz.
+- **Decision:** stay at 200 Hz. Same delay, finer impact timing and velocity.
+- The phone's audio was routed to a Bluetooth headset (`EPOS IMPACT 1060T ANC`) during this
+  recording; that adds 150–300 ms when the drum is on.
+
+## 2026-11-25: Eager trigger on a packet's last sample (replay of the 200 Hz recordings)
+
+Replayed the two 200 Hz recordings (25 stomps) and looked at the packet before each stomp's
+trigger. Feature as a fraction of the detector's threshold:
+
+```
+last sample of the packet before the trigger, stomps that then fired in the next packet's frame 1:
+  0.98 (waited 16 ms), 0.95 (2 ms), 1.00 just under (78 ms), 0.79 (74 ms), 0.70 (48 ms)
+largest sample in quiet packets (not within 3 packets of a stomp): 0.56 and 0.74 (p99 0.42, 0.67)
+replayed stomp counts, eagerRatio 0 / 0.7 / 0.8: 14 / 14 / 14 and 11 / 12 / 11
+```
+
+- **Change:** `eagerRatio` (Tune & debug, "Eager" slider; 0 = off, the default). At the end of
+  each Bluetooth notification, if the last sample is over eagerRatio × threshold, fire on it now
+  rather than wait up to ~80 ms for the next packet. Bluetooth only. The status shows how many
+  fired early. Replay applies it too (packets are inferred from shared arrival times).
+- **At 0.8:** 3 of 25 stomps fire one packet sooner (2, 16 and 78 ms), with no extra triggers in
+  these recordings. At 0.7, 5 of 25, but one extra trigger already shows. The 50 Hz recording
+  is unchanged down to 0.6.
+- **Not checked:** walking, weight shifts and foot tapping. The quiet packets here were standing
+  still between stomps, so false triggers while moving are unknown.
+
+## 2026-11-25: Wired sensor option (USB cable to a second phone)
+
+Plan: an old phone reads the sensor over its USB-C cable and plays the drum through its own audio
+jack, which avoids the Bluetooth packing entirely.
+
+- **Change:** a "Sensor link: Bluetooth / USB cable" button on the home screen. USB drives the
+  sensor's CH340 chip directly (115200 baud, no driver library), reads on its own audio-priority
+  thread and timestamps each read. It sets rate and bandwidth over the cable as it does over
+  Bluetooth. Plugging in the sensor offers to open the app and switches it to USB. The first
+  300 ms after opening is dropped (the chip's backlog), and the sample clock restarts on each
+  connect.
+- **Older phones:** minSdk is now 28 (Android 9, was 33), and the native audio engine is also
+  built for 32-bit ARM. Bluetooth still needs Android 13 and says so on older phones. Before
+  Android 10, recordings aren't copied to Downloads (Share still works).
+- **Status:** `USB: … frames per read` should read ~1.00, with the ping (register round trip) a
+  few ms. The battery register (0x64) read 515 over USB in the dump, so the status labels it
+  "supply" (5.15 V) on the wired link.
+- **Expected:** the detected sample arrives ~3 ms after it is measured, against 12–97 ms over
+  Bluetooth. That leaves the detector (~30 ms from impact to the detected sample) and the old
+  phone's audio output. Untested: needs the old phone, and a USB-C (or OTG) cable or adapter.
+
+## Open questions
+
+- **Phone audio output (~100 ms on both speaker and USB-C):** solved for USB-C: AAudio exclusive
+  measures 23 ms by mic (~103 ms with AudioTrack). Otherwise a separate box (Raspberry Pi or Teensy reading the sensor over USB) avoids
+  both the phone's audio delay and the Bluetooth batching.
+- **First-burst detection:** mostly done at 0.5 g (20 of 25 stomps). The eager trigger (0.8)
+  catches 3 more in replay; needs a try by foot and recordings of walking and weight shifts to
+  check false triggers.
+- **Stalls:** what does the `stalls:` line show when one happens? Build #34 showed 52 reconnects
+  in one session: why?
+- **Custom firmware:** the WT901BLECL datasheet names one nRF52832 as the Bluetooth chip, with an
+  MPU9250 motion sensor and a fixed 115200-baud wired output on the USB-C port. Options:
+  - **Ask WitMotion** for a firmware build that sends every frame at once. They advertise OEM
+    customisation, but nothing public says whether they'd do it, or whether the sensor can be
+    updated over the air.
+  - **Reflash it ourselves:** possible over SWD after a full erase (the original firmware is lost).
+    It means writing all the firmware and tracing the board's pins: the same job as the XIAO
+    firmware on worse hardware, so not worth it.
+  - **Done:** the USB-C output is one frame per sample, so the packing is Bluetooth-only. No
+    firmware image is public; WitMotion's app updates over Bluetooth from a file they supply.
+  - **Next:** does our sensor list the FE59 update service (app tuning screen, or
+    `tools/wit_ble_gatt.py`)? Then ask WitMotion for a build without the ~44 ms packing.
+  - **Measure the exact Bluetooth delay** with `tools/wit_ble_vs_usb.py` once the Mac allows
+    Bluetooth (or from Terminal).
+- **A faster sensor:** the WT901's ~44 ms packing is the floor for this sensor. On-sensor detection
+  over BLE (the XIAO firmware, PR #5) should give ~10–15 ms sensor → phone; see issue #4.
