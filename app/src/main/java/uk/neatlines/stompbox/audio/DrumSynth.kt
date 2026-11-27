@@ -14,6 +14,7 @@ import android.os.Looper
 import android.os.Process
 import uk.neatlines.stompbox.stomp.StompOutput
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
@@ -33,6 +34,10 @@ import kotlin.random.Random
  * Two engines ([engine], saved): AUDIOTRACK (Java, Android's mixer) and AAUDIO, a native AAudio
  * stream asking for exclusive (MMAP) mode, which skips the mixer where the device supports it
  * (Pixel speaker; usually not USB, where it falls back to shared).
+ *
+ * Sound settings ([sound]: pitch, tone, reverb; saved) are applied offline by [SoundShaper] to the
+ * dry voices on a worker thread, and the result swapped in. Saved in SharedPreferences, which an
+ * app update (same signing key) keeps.
  */
 class DrumSynth(context: Context) : StompOutput {
     @Volatile var muted = false
@@ -52,12 +57,40 @@ class DrumSynth(context: Context) : StompOutput {
 
     // Phone speakers barely reproduce a kick's 50–150 Hz body, so the attack gets a 2 ms click
     // and a short burst of noise: that is what you hear first (and what the latency test's mic catches).
-    private val kick = Random(2).let { r -> render(0.45) { t ->
+    private val dryKick = Random(2).let { r -> render(0.45) { t ->
         0.8 * sin(2 * PI * (50 * t + 100 * 0.03 * (1 - exp(-t / 0.03)))) * exp(-t / 0.22) +
             0.6 * sin(2 * PI * 3000 * t) * exp(-t / 0.002) + 0.4 * r.nextDouble(-1.0, 1.0) * exp(-t / 0.004)
     } }
-    private val snare = Random(1).let { r -> render(0.3) { t -> (r.nextDouble(-1.0, 1.0) * 0.7 * exp(-t / 0.10)) + 0.5 * sin(2 * PI * 185 * t) * exp(-t / 0.05) } }
-    private val click = render(0.03) { t -> sin(2 * PI * 2000 * t) * exp(-t / 0.006) }
+    private val drySnare = Random(1).let { r -> render(0.3) { t -> (r.nextDouble(-1.0, 1.0) * 0.7 * exp(-t / 0.10)) + 0.5 * sin(2 * PI * 185 * t) * exp(-t / 0.05) } }
+    private val dryClick = render(0.03) { t -> sin(2 * PI * 2000 * t) * exp(-t / 0.006) }
+
+    /** Pitch, tone and reverb for every voice. Setting it saves it and re-renders the voices in the background. */
+    @Volatile var sound: SoundSettings = SoundSettings.parse(prefs.getString("sound", null))
+        set(v) {
+            val c = v.clamped()
+            field = c
+            prefs.edit().putString("sound", c.format()).apply()
+            shaper.execute(::reshape)
+        }
+
+    // The shaped voices actually played (dry until the first reshape finishes).
+    @Volatile private var kick = dryKick
+    @Volatile private var snare = drySnare
+    @Volatile private var click = dryClick
+    /** Set when the voices changed and the AAudio stream must reload them. */
+    @Volatile private var voicesChanged = false
+    private val shaper = Executors.newSingleThreadExecutor { r -> Thread(r, "drum-shaper").apply { isDaemon = true } }
+
+    /** Renders the current [sound]; skipped if a newer setting is already queued behind it (slider drags). */
+    private fun reshape() {
+        val s = sound
+        val k = SoundShaper.apply(dryKick, s, rate)
+        val sn = SoundShaper.apply(drySnare, s, rate)
+        val cl = SoundShaper.apply(dryClick, s, rate)
+        if (s != sound) return
+        kick = k; snare = sn; click = cl
+        voicesChanged = true
+    }
 
     private class Voice(val data: FloatArray, val gain: Float) { var pos = 0 }
     private val pending = ConcurrentLinkedQueue<Voice>()
@@ -75,7 +108,9 @@ class DrumSynth(context: Context) : StompOutput {
     @Volatile var deviceLabel = label(null); private set
 
     /** One line for the status screens. */
-    fun summary() = if (engine == Engine.AAUDIO)
+    fun summary() = engineSummary() + ", sound " + sound.format()
+
+    private fun engineSummary() = if (engine == Engine.AAUDIO)
         "$deviceLabel, AAudio %s, buffer %.1f ms, output latency %.0f ms, underruns %d".format(
             if (!aaudioOpen) "NOT OPEN" else if (exclusiveGranted) "exclusive (MMAP)" else "shared (exclusive refused)",
             bufferMs, outputLatencyMs, underruns)
@@ -93,6 +128,7 @@ class DrumSynth(context: Context) : StompOutput {
             override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = pickDevice()
         }, main)
         pickDevice()
+        if (sound != SoundSettings()) shaper.execute(::reshape)
         Thread(::renderLoop, "drum-synth").apply { isDaemon = true; start() }
     }
 
@@ -142,7 +178,14 @@ class DrumSynth(context: Context) : StompOutput {
         val info = DoubleArray(8)
         while (true) {
             if (engine == Engine.AAUDIO) {
+                pending.clear()     // AudioTrack voices queued while the stream was (re)opening: never play them late
                 if (track != null) { runCatching { track!!.pause(); track!!.flush(); track!!.release() }; track = null }
+                if (voicesChanged) {
+                    // The native mixer reads its sounds without a lock, so close the stream while loading new ones.
+                    voicesChanged = false
+                    if (aaudioOpen) { aaudioOpen = false; AAudioDrum.nativeClose() }
+                    aaudioLoaded = false
+                }
                 if (!aaudioLoaded) {
                     AAudioDrum.nativeLoad(0, kick); AAudioDrum.nativeLoad(1, snare); AAudioDrum.nativeLoad(2, click)
                     aaudioLoaded = true
