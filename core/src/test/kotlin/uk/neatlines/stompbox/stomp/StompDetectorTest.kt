@@ -3,7 +3,6 @@ package uk.neatlines.stompbox.stomp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import uk.neatlines.stompbox.latency.LatencyStats
 import uk.neatlines.stompbox.sim.Sim
 
 class StompDetectorTest {
@@ -53,26 +52,24 @@ class StompDetectorTest {
         assertTrue("${ev.map { it.velocity }}", ev[1].velocity > ev[0].velocity + 30)
     }
 
-    @Test fun steadyTimingRemovesBleJitter() {
+    @Test fun pipelinePlaysEachStompOnArrival() {
         val sim = Sim(seed = 7)
-        val st = stomps(60)
-        val samples = sim.stream(200 + 60 * 100 + 200, st)
+        val st = stomps(20)
+        val samples = sim.stream(200 + 20 * 100 + 200, st)
         val arrivals = sim.arrivals(samples.map { it.first })
-        fun spread(timing: Timing): LatencyStats {
-            val fired = ArrayList<Pair<StompEvent, Long>>()
-            val p = StompPipeline(StompConfig.SHOE.copy(timing = timing), placement) { e, at -> fired += e to at }
-            samples.forEachIndexed { i, (_, s) -> p.onSample(s, arrivals[i]) }
-            assertEquals(st.size, fired.size)
-            return LatencyStats.of(fired.map { (e, at) -> (at - e.sampleIndex * sim.periodNanos) / 1e6 })!!
-        }
-        val imm = spread(Timing.IMMEDIATE)
-        val steady = spread(Timing.STEADY)
-        assertTrue("immediate ±${imm.spread90 / 2}", imm.spread90 / 2 > 4)
-        assertTrue("steady ±${steady.spread90 / 2}", steady.spread90 / 2 < 1)
+        val fired = ArrayList<Pair<StompEvent, Long>>()
+        val p = StompPipeline(StompConfig.SHOE, placement) { e, at -> fired += e to at }
+        samples.forEachIndexed { i, (_, s) -> p.onSample(s, arrivals[i]) }
+        assertEquals(st.size, fired.size)
+        for ((e, at) in fired) assertEquals(e.arrivalNanos, at)
     }
 
     @Test fun configRoundTrips() {
-        val c = StompConfig.LEG.copy(minThresholdG = 0.9, timing = Timing.STEADY)
+        val c = StompConfig.LEG.copy(minThresholdG = 0.9)
         assertEquals(c, StompConfig().with(c.toMap()))
+    }
+
+    @Test fun removedTimingSettingsInOldConfigsAreIgnored() {
+        assertEquals(StompConfig.SHOE, StompConfig().with(mapOf("timing" to "STEADY", "steadyDelayMs" to "100.0")))
     }
 }

@@ -2,7 +2,6 @@ package uk.neatlines.stompbox.stomp
 
 import android.content.Context
 import android.os.Build
-import android.os.Process
 import android.util.Log
 import uk.neatlines.stompbox.debug.LinkStats
 import uk.neatlines.stompbox.debug.StompLogWriter
@@ -15,14 +14,12 @@ import uk.neatlines.stompbox.wit.WitSample
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.locks.LockSupport
 
 /** What the app's sound engine has to provide. */
 fun interface StompOutput {
-    /** Play now. Called on the sensor's read thread (IMMEDIATE) or the scheduler thread (STEADY). */
+    /** Play now. Called on the sensor's read thread. */
     fun play(note: Int, velocity: Int)
 }
 
@@ -97,36 +94,15 @@ class StompEngine(private val context: Context, private val output: StompOutput)
         pipeline.onSample(s, arrivalNanos)
     }
 
-    private fun onStomp(e: StompEvent, fireAtNanos: Long) {
-        if (fireAtNanos <= System.nanoTime()) output.play(e.note, e.velocity) else scheduler.schedule(fireAtNanos, e)
-        recording?.post { it.stomp(e, fireAtNanos) }
-        if (latencyProbe != null) latency.stomp(e.arrivalNanos, maxOf(fireAtNanos, e.arrivalNanos))
+    private fun onStomp(e: StompEvent, firedNanos: Long) {
+        output.play(e.note, e.velocity)
+        recording?.post { it.stomp(e, firedNanos) }
+        if (latencyProbe != null) latency.stomp(e.arrivalNanos, firedNanos)
         synchronized(recentStomps) { recentStomps.addLast(e); while (recentStomps.size > 50) recentStomps.removeFirst() }
         onStompUi?.invoke(e)
         // Live debug without the app UI: adb logcat -s Stomp
         Log.d("Stomp", "zone=${e.zone} vel=${e.velocity} peak=%.2f tilt=%.1f lag=%.1fms".format(
             e.peak, e.tiltDeg, (e.arrivalNanos - e.sampleNanos) / 1e6))
-    }
-
-    /** STEADY timing: sleeps until each stomp's target time, then plays it. */
-    private val scheduler = object {
-        private val queue = PriorityBlockingQueue<Pair<Long, StompEvent>>(16, compareBy { it.first })
-        private val thread = Thread({
-            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
-            while (true) {
-                val (at, e) = queue.take()
-                // Park until ~0.5 ms before, then spin: parkNanos alone can overshoot by a millisecond.
-                while (true) {
-                    val left = at - System.nanoTime()
-                    if (left <= 0) break
-                    if (left > 500_000) LockSupport.parkNanos(left - 500_000) else Thread.yield()
-                    if (queue.peek()?.let { it.first < at } == true) { queue.put(at to e); break }
-                }
-                if (at <= System.nanoTime()) output.play(e.note, e.velocity)
-            }
-        }, "stomp-scheduler").apply { isDaemon = true; start() }
-
-        fun schedule(at: Long, e: StompEvent) = queue.put(at to e)
     }
 
     // ---- calibration ------------------------------------------------------------------------

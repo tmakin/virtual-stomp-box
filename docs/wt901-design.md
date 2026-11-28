@@ -50,6 +50,11 @@ notifications in pairs, so detected sample → arrival reaches ~97 ms: the defau
 (slider up to 150). **IMMEDIATE** is about 10 ms quicker but jitters by a whole connection
 interval.
 
+**Update (2026-11-28):** STEADY timing and its delay setting have been removed. With the real
+sensor's ~100 ms worst case, STEADY added far more delay than the jitter it removed, so the app
+always plays a stomp the moment it is detected. Old logs and saved configs that still name
+`timing` or `steadyDelayMs` load as before; those keys are ignored.
+
 **Neither mode meets the original ≤10 ms target with this sensor.** Both modes are a toggle on
 the tuning screen, so try both while playing. The replay tool prints both figures from a single
 recording made with the microphone on.
@@ -80,7 +85,6 @@ WT901 ──BLE notify (FFE4)──▶ WitBleSource        takes System.nanoTime
                            SampleClock            arrival times → estimated sample times
                            LinkStats              frames per event, connection interval, lag
                            StompDetector          orientation + accel → StompEvent(zone, velocity)
-                           StompTiming            IMMEDIATE / STEADY fire time
                               ▼
                          StompEngine ──▶ StompOutput.play(note, velocity)   (app's sound engine)
                               ├─▶ StompLogWriter  recording (CSV) ──share──▶ laptop: Replay, plot
@@ -92,7 +96,7 @@ WT901 ──BLE notify (FFE4)──▶ WitBleSource        takes System.nanoTime
 | `wit/WitProtocol.kt`: UUIDs, commands, frame parser | `core` | unit tests |
 | `wit/SampleClock.kt` | `core` | unit tests (jitter, dropped frames, crystal error) |
 | `stomp/Orientation.kt`: gravity from angles, calibration, tilt | `core` | unit tests |
-| `stomp/StompConfig.kt`, `StompDetector.kt`, `StompTiming.kt`, `StompPipeline.kt` | `core` | unit tests on simulated stomps |
+| `stomp/StompConfig.kt`, `StompDetector.kt`, `StompPipeline.kt` | `core` | unit tests on simulated stomps |
 | `debug/StompLog.kt`, `LinkStats.kt`, `Replay.kt` | `core` | round-trip test; replay run on a synthetic log |
 | `input/WitBleSource.kt`, `stomp/StompEngine.kt`, `debug/StompTuningActivity.kt`, `debug/StompPlotView.kt` | `app` | on a Pixel 8a (see the journal) |
 | `input/WitUsbSource.kt`: the sensor over its USB cable, for a phone wired to the sensor (home screen "Sensor link") | `app` | compiled by CI only; not run on a phone yet |
@@ -158,9 +162,7 @@ mode keeps its own tuning.
   detected), output (play → drum heard) and total (impact → drum heard). See "Latency" below.
 - **Live plot of the last 4 s:** the feature (white), the threshold (red dashed) and a dot on each stomp.
 - **Last stomp:** velocity and peak.
-- **Toggles:** mode, feature, timing (IMMEDIATE / STEADY) and sensor rate (200 / 100 / 50 Hz).
-  STEADY also shows a count of frames that arrived too late for the delay; raise "Steady delay" if
-  it climbs.
+- **Toggles:** mode, feature and sensor rate (200 / 100 / 50 Hz).
 - **Heel/toe zones are off** for the first iteration: one stomp, one sound. The code is still in
   the detector (`zonesEnabled`), with no UI.
 - **Sliders** for every setting. Changes apply immediately and are saved for the current mode.
@@ -194,8 +196,7 @@ try all this before the sensor is strapped on. Here is the output on that synthe
 ```
 link: rate 200.1 Hz, 2.29 frames/event, interval median 11.20 ms p95 11.41, lag median 5.0 p95 10.1 max 28.6 ms
 stomps: 40  zones {FLAT=14, TOE=13, HEEL=13}
-IMMEDIATE impact→fire: median 8.1 ms  p95 16.8 ms  spread(p5–p95) 13.8 ms (±6.9)  missed=0 false=0
-STEADY (25.0 ms) impact→fire: median 28.0 ms  p95 28.2 ms  spread 0.3 ms (±0.1)  late=0
+impact→fire: median 8.1 ms  p95 16.8 ms  spread(p5–p95) 13.8 ms (±6.9)  missed=0 false=0
 ```
 
 The synthetic log has no sensor-internal delay and no sample-phase error, so these figures are
@@ -212,7 +213,6 @@ better than the model's.
    right colour.
 5. Record a minute of real playing with the mic on, share it, and run the sweep on the laptop.
    Copy the winning values into the sliders.
-6. Play with IMMEDIATE and then STEADY, and keep whichever feels better.
 
 ## The test app
 
@@ -224,9 +224,8 @@ how to install it from the CI release.
   with a two-burst buffer. The home screen shows the reported buffer size in ms.
 - The home screen has Connect, a large flash per stomp with the velocity, Sound on/off, and
   **Tune & debug**. Both screens pad for the system bars (Android 15 draws edge to edge).
-- The engine plays IMMEDIATE stomps on the GATT thread. STEADY stomps go through a high-priority
-  scheduler thread that wakes at the target time. That is usually well under 1 ms off target,
-  but it hasn't been measured. The synth starts a voice at its next burst, which adds up to one
+- The engine plays each stomp on the sensor's read thread (the GATT thread over Bluetooth) as
+  soon as it is detected. The synth starts a voice at its next burst, which adds up to one
   burst (about 2–4 ms) of jitter. Starting voices at a given frame inside the synth would remove
   that.
 - Settings, calibration and the mode are kept in SharedPreferences. Recordings are saved to

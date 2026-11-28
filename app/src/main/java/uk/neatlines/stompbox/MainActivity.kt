@@ -167,7 +167,7 @@ class MainActivity : Activity() {
                 append("Build ${BuildConfig.BUILD_LABEL}\n")
                 append("Sensor (${s.kind}): ${s.deviceName ?: "-"} · ${s.status}")
                 if (!s.batteryVolts.isNaN()) append(" · ${if (e.wired) "supply" else "battery"} %.2f V".format(s.batteryVolts))
-                append("\nMode ${e.config.mode} · timing ${e.config.timing} · ${e.rateHz} Hz · stomps ${e.pipeline.detector.triggers}")
+                append("\nMode ${e.config.mode} · ${e.rateHz} Hz · stomps ${e.pipeline.detector.triggers}")
                 append("\nAudio: ${app.synth.summary()}")
                 if (s.reconnects > 0 || s.gaps.count > 0) append("\ngaps ${s.gaps.summary()} · reconnects ${s.reconnects}")
                 if (s.status == "streaming") append("\n").append(e.link().format())
