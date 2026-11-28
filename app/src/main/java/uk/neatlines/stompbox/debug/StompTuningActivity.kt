@@ -27,7 +27,6 @@ import uk.neatlines.stompbox.stomp.Feature
 import uk.neatlines.stompbox.stomp.Mode
 import uk.neatlines.stompbox.stomp.StompConfig
 import uk.neatlines.stompbox.stomp.StompEngine
-import uk.neatlines.stompbox.stomp.Timing
 import uk.neatlines.stompbox.ui.UiStallWatch
 import uk.neatlines.stompbox.ui.padForSystemBars
 import java.io.File
@@ -74,7 +73,8 @@ class StompTuningActivity : Activity() {
         col.addView(TextView(this).apply {
             textSize = 12f
             text = "Phone on the floor next to your foot, sound on (phone speaker, not Bluetooth). " +
-                "Stomp once each time the bar below flashes (every 2 s). The mic hears the impact and the drum."
+                "Stomp once each time the bar below flashes (every 2 s). The mic hears the impact and the drum. " +
+                "Sound settings change the drum's attack (a dark tone hides the click the mic listens for), so Reset them first."
         })
         latencyButton = button("Start latency test") { toggleLatency() }
         col.addView(latencyButton)
@@ -102,15 +102,10 @@ class StompTuningActivity : Activity() {
                 set { it.copy(feature = if (it.feature == Feature.VERTICAL) Feature.JERK else Feature.VERTICAL) }
             },
         ))
-        col.addView(row(
-            cycler({ "Timing: ${engine.config.timing}" }) {
-                set { it.copy(timing = if (it.timing == Timing.IMMEDIATE) Timing.STEADY else Timing.IMMEDIATE) }
-            },
-            cycler({ "Sensor rate: ${engine.rateHz} Hz" }) {
-                val r = StompEngine.RATES
-                engine.rateHz = r[(r.indexOf(engine.rateHz) + 1) % r.size]
-            },
-        ))
+        col.addView(cycler({ "Sensor rate: ${engine.rateHz} Hz" }) {
+            val r = StompEngine.RATES
+            engine.rateHz = r[(r.indexOf(engine.rateHz) + 1) % r.size]
+        })
         val synth = (application as StompApp).synth
         col.addView(cycler({ "Audio engine: ${if (synth.engine == DrumSynth.Engine.AAUDIO) "AAudio (MMAP)" else "AudioTrack"}" }) {
             synth.engine = if (synth.engine == DrumSynth.Engine.AAUDIO) DrumSynth.Engine.AUDIOTRACK else DrumSynth.Engine.AAUDIO
@@ -150,7 +145,6 @@ class StompTuningActivity : Activity() {
         slider(col, "Velocity full scale", "g", 1.0, 16.0, 0.5, { it.velocityFullScaleG }) { c, v -> c.copy(velocityFullScaleG = v) }
         slider(col, "Velocity curve", "", 0.2, 2.0, 0.05, { it.velocityCurve }) { c, v -> c.copy(velocityCurve = v) }
         slider(col, "Gyro gate (0 = off)", "°/s", 0.0, 400.0, 10.0, { it.gyroGateDps }) { c, v -> c.copy(gyroGateDps = v) }
-        slider(col, "Steady delay", "ms", 10.0, 150.0, 1.0, { it.steadyDelayMs }) { c, v -> c.copy(steadyDelayMs = v) }
         col.addView(button("Reset this mode to defaults") { set { StompConfig.forMode(it.mode) } })
 
         setContentView(ScrollView(this).apply { addView(col); padForSystemBars(24); clipToPadding = false })
@@ -249,8 +243,7 @@ class StompTuningActivity : Activity() {
                 append("\n⚠ receiving %.0f of %d frames/s: the link isn't keeping up, so frames queue in the sensor and add delay. Try a lower sensor rate."
                     .format(link.sampleRateHz, engine.rateHz))
             }
-            append("\nmode ${c.mode}  feature ${c.feature}  timing ${c.timing}")
-            if (c.timing == Timing.STEADY) append(" (late ${engine.pipeline.timing.late})")
+            append("\nmode ${c.mode}  feature ${c.feature}")
             if (c.eagerRatio > 0) append("  eager %.2f (fired early ${engine.pipeline.detector.eagerTriggers})".format(c.eagerRatio))
             val synth = (application as StompApp).synth
             append("\naudio: ${synth.summary()}")

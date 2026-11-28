@@ -19,7 +19,7 @@ import java.util.Locale
  * ./gradlew run --args="stomp-log.csv --frames frames.csv"              # per-sample trace for tools/plot_stomp_log.py
  * ```
  * When the log has mic onsets (recorded with the latency probe on), it also reports impact →
- * app latency and jitter for both timing modes, plus missed taps and false triggers.
+ * app latency and jitter, plus missed taps and false triggers.
  */
 fun main(args: Array<String>) {
     System.setOut(java.io.PrintStream(java.io.FileOutputStream(java.io.FileDescriptor.out), true, "UTF-8"))
@@ -66,8 +66,7 @@ fun main(args: Array<String>) {
     LatencyStats.of(r.events.map { it.first.velocity.toDouble() })?.let {
         println("velocity: min %.0f median %.0f max %.0f".format(Locale.US, it.min, it.median, it.max))
     }
-    r.immediate?.let { println("IMMEDIATE impact→fire: ${it.stats?.format() ?: "no pairs"}  missed=${it.missed} false=${it.falseTriggers}") }
-    r.steady?.let { println("STEADY (${base.steadyDelayMs} ms) impact→fire: ${it.stats?.format() ?: "no pairs"}  late=${r.late}") }
+    r.immediate?.let { println("impact→fire: ${it.stats?.format() ?: "no pairs"}  missed=${it.missed} false=${it.falseTriggers}") }
     if (log.onsets.isEmpty()) println("(no mic onsets in this log: record with the latency probe on to get latency figures)")
     framesOut?.let { println("wrote $it") }
 }
@@ -76,20 +75,12 @@ private class ReplayResult(
     val events: List<Pair<StompEvent, Long>>,
     val link: LinkStats.Snapshot,
     val resyncs: Int,
-    val late: Int,
     val immediate: TapPairer.Result?,
-    val steady: TapPairer.Result?,
 )
 
 private fun run(log: StompLog, config: StompConfig, rate: Int, framesOut: String?): ReplayResult {
     val events = ArrayList<Pair<StompEvent, Long>>()
-    val steadyFire = ArrayList<Long>()
-    val pipeline = StompPipeline(config.copy(timing = uk.neatlines.stompbox.stomp.Timing.IMMEDIATE), log.placement, rate) { e, at ->
-        events += e to at
-    }
-    // STEADY fire times are computed separately so one pass reports both modes.
-    val steadyTiming = uk.neatlines.stompbox.stomp.StompTiming()
-    val steadyCfg = config.copy(timing = uk.neatlines.stompbox.stomp.Timing.STEADY)
+    val pipeline = StompPipeline(config, log.placement, rate) { e, at -> events += e to at }
     val frames = framesOut?.let { File(it).printWriter() }
     frames?.println("index,sample_ms,arrival_ms,feature,threshold,vertical,jerk,tilt,gyro,armed,triggered")
     val t0 = log.samples.firstOrNull()?.first ?: 0L
@@ -99,7 +90,6 @@ private fun run(log: StompLog, config: StompConfig, rate: Int, framesOut: String
             d.index, (d.sampleNanos - t0) / 1e6, (arrival - t0) / 1e6, d.feature, d.threshold, d.vertical, d.jerk,
             d.tiltDeg, d.gyroDps, if (d.armed) 1 else 0, if (d.triggered) 1 else 0))
     }
-    var seen = 0
     // Samples from one notification share an arrival time, so a packet ends where the time changes.
     // A Bluetooth log only: over USB every read would count as a packet.
     val packets = log.info["link"] != "USB_cable"
@@ -109,12 +99,10 @@ private fun run(log: StompLog, config: StompConfig, rate: Int, framesOut: String
         arrival = t
         pipeline.onSample(s, t)
         if (packets && (k + 1 == samples.size || samples[k + 1].first != t)) pipeline.onPacketEnd()
-        while (seen < events.size) { steadyFire += steadyTiming.fireAtNanos(events[seen].first, steadyCfg, t); seen++ }
     }
     frames?.close()
     val immediate = if (log.onsets.isEmpty()) null else TapPairer.pair(log.onsets, events.map { it.second })
-    val steady = if (log.onsets.isEmpty()) null else TapPairer.pair(log.onsets, steadyFire)
-    return ReplayResult(events, pipeline.link.snapshot(), pipeline.clock.resyncs, steadyTiming.late, immediate, steady)
+    return ReplayResult(events, pipeline.link.snapshot(), pipeline.clock.resyncs, immediate)
 }
 
 private fun fmt(x: Double) = if (x == Math.rint(x)) x.toLong().toString() else "%.4f".format(Locale.US, x).trimEnd('0')

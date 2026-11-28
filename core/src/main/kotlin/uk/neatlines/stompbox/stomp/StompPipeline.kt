@@ -8,20 +8,20 @@ import uk.neatlines.stompbox.wit.WitSample
  * Sensor sample in, timed stomp out. The phone and the desktop replay tool both run exactly this,
  * so a recording replayed with the same config reproduces what happened live.
  *
- * [onStomp] gets the event and the System.nanoTime at which to play it ([StompTiming]).
+ * [onStomp] gets each event as soon as it is detected, with the arrival time of the sample that
+ * fired it (System.nanoTime live; the logged arrival time in replay): play it now.
  */
 class StompPipeline(
     config: StompConfig,
     placement: Placement = Placement.DEFAULT,
     rateHz: Int = 200,
-    private val onStomp: (StompEvent, fireAtNanos: Long) -> Unit,
+    private val onStomp: (StompEvent, firedNanos: Long) -> Unit,
 ) {
     val clock = SampleClock(rateHz.toDouble())
     val link = LinkStats()
-    val timing = StompTiming()
     private var now = 0L
     val detector = StompDetector(config, placement, rateHz.toDouble(), onStomp = { e ->
-        onStomp(e, timing.fireAtNanos(e, this.config, now))
+        onStomp(e, now)
     })
 
     var config: StompConfig

@@ -10,14 +10,6 @@ enum class Feature {
 
 enum class Zone { FLAT, HEEL, TOE }
 
-/** How the app turns a detection into a sound. */
-enum class Timing {
-    /** Play as soon as the sample arrives. Lowest delay, but jitter of about a whole BLE connection interval. */
-    IMMEDIATE,
-    /** Play at the estimated impact time + [StompConfig.steadyDelayMs]. Constant delay, little jitter. */
-    STEADY,
-}
-
 /**
  * Every tunable in one place, so the debug screen, presets, the log header and the replay tool
  * all use the same names. Units are in the names.
@@ -40,8 +32,6 @@ data class StompConfig(
     val heelTiltDeg: Double = 8.0,       // toes up at least this much → HEEL
     val toeTiltDeg: Double = 8.0,        // toes down at least this much → TOE
     val orientationLagSamples: Int = 2,  // read orientation from before the impact disturbed it
-    val timing: Timing = Timing.IMMEDIATE,
-    val steadyDelayMs: Double = 100.0,
     val noteFlat: Int = 36, val noteHeel: Int = 36, val noteToe: Int = 38,
 ) {
     fun note(zone: Zone) = when (zone) { Zone.FLAT -> noteFlat; Zone.HEEL -> noteHeel; Zone.TOE -> noteToe }
@@ -55,7 +45,6 @@ data class StompConfig(
         "velocityFullScaleG" to "$velocityFullScaleG", "velocityCurve" to "$velocityCurve",
         "gyroGateDps" to "$gyroGateDps", "gyroGateMs" to "$gyroGateMs", "zonesEnabled" to "$zonesEnabled",
         "heelTiltDeg" to "$heelTiltDeg", "toeTiltDeg" to "$toeTiltDeg", "orientationLagSamples" to "$orientationLagSamples",
-        "timing" to timing.name, "steadyDelayMs" to "$steadyDelayMs",
         "noteFlat" to "$noteFlat", "noteHeel" to "$noteHeel", "noteToe" to "$noteToe",
     )
 
@@ -80,8 +69,8 @@ data class StompConfig(
             "heelTiltDeg" -> c.copy(heelTiltDeg = v.toDouble())
             "toeTiltDeg" -> c.copy(toeTiltDeg = v.toDouble())
             "orientationLagSamples" -> c.copy(orientationLagSamples = v.toInt())
-            "timing" -> c.copy(timing = Timing.valueOf(v.uppercase()))
-            "steadyDelayMs" -> c.copy(steadyDelayMs = v.toDouble())
+            // Removed settings (stomps always play on detection): still in older logs and saved configs.
+            "timing", "steadyDelayMs" -> c
             "noteFlat" -> c.copy(noteFlat = v.toInt())
             "noteHeel" -> c.copy(noteHeel = v.toInt())
             "noteToe" -> c.copy(noteToe = v.toInt())
@@ -92,8 +81,8 @@ data class StompConfig(
 
     companion object {
         /**
-         * Starting points, chosen for the lowest latency: VERTICAL feature, IMMEDIATE timing (play
-         * on arrival, no steady delay), no peak wait, no gyro gate. The app also uses 200 Hz, the
+         * Starting points, chosen for the lowest latency: VERTICAL feature, no peak wait, no gyro gate.
+         * Stomps always play the moment they are detected. The app also uses 200 Hz, the
          * 2M PHY, a 247-byte MTU and CONNECTION_PRIORITY_HIGH. Measured: 86 ms impact → detected.
          * LEG uses JERK because the shin sees a weaker, less vertical impact.
          */

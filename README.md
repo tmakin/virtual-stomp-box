@@ -17,7 +17,10 @@ example `apk-main`.
 4. Open **Stomp Box** and tap **Connect sensor**. Allow Bluetooth when asked, with the WT901
    switched on.
 
-Later builds install over the old one and keep your tuning and calibration.
+Later builds install over the old one and keep your tuning, calibration and sound settings.
+
+**Sound settings** on the home screen change the stomp's pitch (±12 semitones), tone (darker to brighter)
+and reverb. **Test** plays the kick, and **Reset** puts the settings back to the defaults.
 
 To get data off the phone, use **Tune & debug**:
 
@@ -37,7 +40,7 @@ To get data off the phone, use **Tune & debug**:
   - The home screen shows and plays each stomp.
   - The **Tune & debug** screen has a live plot, sliders, calibration, and recording with sharing.
   - It also contains the WT901 BLE source and a small low-latency drum synth.
-- **[core](core)**: plain-Kotlin code with 37 unit tests (`./gradlew :core:test`).
+- **[core](core)**: plain-Kotlin code with unit tests (`./gradlew :core:test`).
   - WT901 protocol, sample clock, stomp detector, recording format.
   - The desktop replay tool (`./gradlew :core:run --args="/path/to/log.csv"`).
 - **[tools](tools)**:

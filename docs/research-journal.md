@@ -445,6 +445,14 @@ jack, which avoids the Bluetooth packing entirely.
   Bluetooth. That leaves the detector (~30 ms from impact to the detected sample) and the old
   phone's audio output. Untested: needs the old phone, and a USB-C (or OTG) cable or adapter.
 
+## 2026-11-28: Timing setting removed
+
+- **Change:** removed the Timing toggle (IMMEDIATE / STEADY) and the Steady delay slider. Stomps
+  always play the moment they are detected. STEADY needed a ~100 ms delay to cover the sensor's
+  batched notifications (2026-11-25), which costs far more than the jitter it removes.
+- Old recordings and saved settings that name `timing` or `steadyDelayMs` still load; the keys are
+  ignored. The replay tool now prints one `impact→fire` line instead of IMMEDIATE and STEADY.
+
 ## Open questions
 
 - **Phone audio output (~100 ms on both speaker and USB-C):** solved for USB-C: AAudio exclusive
