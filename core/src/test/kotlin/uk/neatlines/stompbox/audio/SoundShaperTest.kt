@@ -43,8 +43,18 @@ class SoundShaperTest {
         val early = rms(y, 3_000, 8_000); val late = rms(y, 40_000, 45_000)
         assertTrue("tail present", early > 1e-3)
         assertTrue("tail decays", late < early / 4)
-        assertTrue(SoundShaper.peak(y) <= 0.9f + 1e-6f)
+        assertTrue(SoundShaper.peak(y) <= 1f)
         assertEquals(0f, y.last(), 1e-6f)
+    }
+
+    @Test fun brightKeepsTheBodyLevelAndStaysUnderFullScale() {
+        // A 100 Hz body with a loud 5 kHz attack: the bright boost pushes the attack past full scale.
+        val x = FloatArray(9_600) { i -> val t = i.toDouble() / rate
+            (0.6 * sin(2 * PI * 100 * t) + (if (i < 480) 0.4 * sin(2 * PI * 5_000 * t) else 0.0)).toFloat() }
+        val y = SoundShaper.apply(x, SoundSettings(tone = 1.0), rate)
+        assertTrue(SoundShaper.peak(y) <= 1f)
+        val body = rms(x, 2_400, 9_600); val bodyOut = rms(y, 2_400, 9_600)
+        assertEquals("body not turned down", body, bodyOut, 0.1 * body)
     }
 
     @Test fun settingsRoundTripAndClamp() {

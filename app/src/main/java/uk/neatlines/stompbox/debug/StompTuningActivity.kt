@@ -74,7 +74,8 @@ class StompTuningActivity : Activity() {
         col.addView(TextView(this).apply {
             textSize = 12f
             text = "Phone on the floor next to your foot, sound on (phone speaker, not Bluetooth). " +
-                "Stomp once each time the bar below flashes (every 2 s). The mic hears the impact and the drum."
+                "Stomp once each time the bar below flashes (every 2 s). The mic hears the impact and the drum. " +
+                "Sound settings change the drum's attack (a dark tone hides the click the mic listens for), so Reset them first."
         })
         latencyButton = button("Start latency test") { toggleLatency() }
         col.addView(latencyButton)

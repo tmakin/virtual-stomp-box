@@ -5,6 +5,7 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.tanh
 
 /**
  * User sound settings for the stomp drum voices.
@@ -41,10 +42,11 @@ data class SoundSettings(val pitchSemitones: Double = 0.0, val tone: Double = 0.
 object SoundShaper {
     fun apply(dry: FloatArray, s: SoundSettings, rate: Int): FloatArray {
         val c = s.clamped()
+        if (c == SoundSettings()) return dry.copyOf()
         var x = pitch(dry, c.pitchSemitones)
         x = tone(x, c.tone, rate)
         if (c.reverb > 0) x = reverb(x, c.reverb, rate)
-        return limit(x, peak(dry).coerceAtLeast(0.5f))
+        return softClip(x, maxOf(peak(dry), 1f))
     }
 
     /** Resample by 2^(st/12) with linear interpolation: +12 is an octave up and half as long. */
@@ -121,10 +123,18 @@ object SoundShaper {
 
     fun peak(x: FloatArray) = x.maxOfOrNull { abs(it) } ?: 0f
 
-    /** Scale down (never up) so the peak is at most [max]: brightening and reverb can push past full scale. */
-    private fun limit(x: FloatArray, max: Float): FloatArray {
-        val p = peak(x)
-        if (p > max) { val k = max / p; for (i in x.indices) x[i] *= k }
+    /**
+     * Brightening and reverb can push peaks past full scale. Rather than scaling the whole voice down
+     * (which would make the dry hit quieter), only samples above 80% of [ceiling] are squashed,
+     * smoothly, so nothing exceeds [ceiling] and the body of the sound keeps its level.
+     */
+    fun softClip(x: FloatArray, ceiling: Float): FloatArray {
+        val knee = 0.8f * ceiling
+        val room = ceiling - knee
+        for (i in x.indices) {
+            val a = abs(x[i])
+            if (a > knee) x[i] = Math.copySign(knee + room * tanh((a - knee) / room), x[i])
+        }
         return x
     }
 

@@ -148,7 +148,7 @@ class MainActivity : Activity() {
             .setNegativeButton("Reset", null)
             .show()
         // Kick (36) is the stomp's default voice. Set as listeners here so the buttons don't close the dialog.
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { synth.play(36, 110) }
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { synth.test() }
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener { synth.sound = SoundSettings(); refreshers.forEach { it() } }
     }
 

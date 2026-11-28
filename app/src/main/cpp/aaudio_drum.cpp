@@ -19,13 +19,17 @@ namespace {
 
 constexpr int kRate = 48000;
 constexpr int kSlots = 8;
-constexpr int kMaxVoices = 16;
+constexpr int kMaxVoices = 32;   // reverb tails make voices up to ~2.4 s long
 constexpr int kQueue = 64;  // power of two
 
 struct Voice { int slot; float gain; int pos; };
 struct Request { int slot; float gain; };
 
+// Read by the callback under soundsLock (try_lock, so it never blocks); nativeLoad swaps a new
+// sound in under the same lock without closing the stream. A voice past the end of a shortened
+// sound just finishes.
 std::vector<float> sounds[kSlots];
+std::mutex soundsLock;
 
 // Single-consumer ring (the audio callback); producers serialised by a mutex.
 Request queue[kQueue];
@@ -47,11 +51,20 @@ aaudio_data_callback_result_t onData(AAudioStream*, void*, void* audioData, int3
     uint32_t head = qHead.load(std::memory_order_relaxed);
     while (head != tail) {
         const Request& r = queue[head & (kQueue - 1)];
-        if (voiceCount < kMaxVoices) voices[voiceCount++] = Voice{r.slot, r.gain, 0};
+        if (voiceCount == kMaxVoices) {   // full: the oldest voice (index 0) makes way
+            for (int v = 1; v < voiceCount; v++) voices[v - 1] = voices[v];
+            voiceCount--;
+        }
+        voices[voiceCount++] = Voice{r.slot, r.gain, 0};
         head++;
     }
     qHead.store(head, std::memory_order_release);
 
+    std::unique_lock<std::mutex> lock(soundsLock, std::try_to_lock);
+    if (!lock.owns_lock()) {   // a sound is being swapped in (microseconds): one silent burst, voices wait
+        std::memset(out, 0, sizeof(float) * 2 * frames);
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    }
     for (int i = 0; i < frames; i++) {
         float x = 0;
         for (int v = 0; v < voiceCount; v++) {
@@ -85,10 +98,13 @@ extern "C" {
 JNIEXPORT void JNICALL
 Java_uk_neatlines_stompbox_audio_AAudioDrum_nativeLoad(JNIEnv* env, jclass, jint slot, jfloatArray data) {
     if (slot < 0 || slot >= kSlots) return;
-    std::lock_guard<std::mutex> g(streamLock);   // only before a stream is open
     jsize n = env->GetArrayLength(data);
-    sounds[slot].resize(n);
-    env->GetFloatArrayRegion(data, 0, n, sounds[slot].data());
+    std::vector<float> fresh(n);
+    env->GetFloatArrayRegion(data, 0, n, fresh.data());
+    {
+        std::lock_guard<std::mutex> g(soundsLock);   // the swap is O(1); the old sound is freed below, unlocked
+        sounds[slot].swap(fresh);
+    }
 }
 
 JNIEXPORT jboolean JNICALL

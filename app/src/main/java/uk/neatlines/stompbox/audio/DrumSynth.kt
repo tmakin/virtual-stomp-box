@@ -70,7 +70,8 @@ class DrumSynth(context: Context) : StompOutput {
             val c = v.clamped()
             field = c
             prefs.edit().putString("sound", c.format()).apply()
-            shaper.execute(::reshape)
+            val g = ++soundGen
+            shaper.execute { reshape(g) }
         }
 
     // The shaped voices actually played (dry until the first reshape finishes).
@@ -79,15 +80,18 @@ class DrumSynth(context: Context) : StompOutput {
     @Volatile private var click = dryClick
     /** Set when the voices changed and the AAudio stream must reload them. */
     @Volatile private var voicesChanged = false
+    /** Bumped on every [sound] change, so queued renders of older settings are skipped. */
+    @Volatile private var soundGen = 0
     private val shaper = Executors.newSingleThreadExecutor { r -> Thread(r, "drum-shaper").apply { isDaemon = true } }
 
     /** Renders the current [sound]; skipped if a newer setting is already queued behind it (slider drags). */
-    private fun reshape() {
+    private fun reshape(gen: Int) {
+        if (gen != soundGen) return
         val s = sound
         val k = SoundShaper.apply(dryKick, s, rate)
         val sn = SoundShaper.apply(drySnare, s, rate)
         val cl = SoundShaper.apply(dryClick, s, rate)
-        if (s != sound) return
+        if (gen != soundGen) return
         kick = k; snare = sn; click = cl
         voicesChanged = true
     }
@@ -128,12 +132,16 @@ class DrumSynth(context: Context) : StompOutput {
             override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = pickDevice()
         }, main)
         pickDevice()
-        if (sound != SoundSettings()) shaper.execute(::reshape)
+        if (sound != SoundSettings()) shaper.execute { reshape(soundGen) }
         Thread(::renderLoop, "drum-synth").apply { isDaemon = true; start() }
     }
 
-    override fun play(note: Int, velocity: Int) {
-        if (muted) return
+    override fun play(note: Int, velocity: Int) { if (!muted) voice(note, velocity) }
+
+    /** Plays a sound even when [muted]: the sound settings' Test button. */
+    fun test(note: Int = 36, velocity: Int = 110) = voice(note, velocity)
+
+    private fun voice(note: Int, velocity: Int) {
         val data = when (note) { 36 -> kick; 38 -> snare; else -> click }
         val v = velocity / 127f
         val gain = 0.15f + 0.85f * v * v
@@ -180,12 +188,7 @@ class DrumSynth(context: Context) : StompOutput {
             if (engine == Engine.AAUDIO) {
                 pending.clear()     // AudioTrack voices queued while the stream was (re)opening: never play them late
                 if (track != null) { runCatching { track!!.pause(); track!!.flush(); track!!.release() }; track = null }
-                if (voicesChanged) {
-                    // The native mixer reads its sounds without a lock, so close the stream while loading new ones.
-                    voicesChanged = false
-                    if (aaudioOpen) { aaudioOpen = false; AAudioDrum.nativeClose() }
-                    aaudioLoaded = false
-                }
+                if (voicesChanged) { voicesChanged = false; aaudioLoaded = false }   // swapped in live, stream stays open
                 if (!aaudioLoaded) {
                     AAudioDrum.nativeLoad(0, kick); AAudioDrum.nativeLoad(1, snare); AAudioDrum.nativeLoad(2, click)
                     aaudioLoaded = true
